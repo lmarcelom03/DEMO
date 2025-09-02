@@ -142,12 +142,14 @@ def concat_hierarchy(gen, sub, subdet, esp, espdet):
 
 def build_classifier_columns(df):
     df = df.copy()
+    gastpre = df.get("tipo_transaccion","")
     gen = df.get("generica", "")
     sub = df.get("subgenerica", "")
     subdet = df.get("subgenerica_det", "")
     esp = df.get("especifica", "")
     espdet = df.get("especifica_det", "")
 
+    df["transf_cod"] = gastpre.map(extract_code) if "tipo_transaccion" in df.columns else ""
     df["gen_cod"] = gen.map(extract_code) if "generica" in df.columns else ""
     df["sub_cod"] = sub.map(extract_code) if "subgenerica" in df.columns else ""
     df["subdet_cod"] = subdet.map(extract_code) if "subgenerica_det" in df.columns else ""
@@ -155,8 +157,8 @@ def build_classifier_columns(df):
     df["espdet_cod"] = espdet.map(extract_code) if "especifica_det" in df.columns else ""
 
     df["clasificador_cod"] = [
-        concat_hierarchy(2, g, s, sd, e, ed)
-        for 2, g, s, sd, e, ed in zip(2, df["gen_cod"], df["sub_cod"], df["subdet_cod"], df["esp_cod"], df["espdet_cod"])
+        concat_hierarchy(gs, g, s, sd, e, ed)
+        for gs, g, s, sd, e, ed in zip(df["transf_cod"], df["gen_cod"], df["sub_cod"], df["subdet_cod"], df["esp_cod"], df["espdet_cod"])
     ]
 
     def desc(text):
