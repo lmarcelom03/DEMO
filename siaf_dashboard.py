@@ -5,41 +5,42 @@ import json
 import numpy as np
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="SIAF Dashboard - Perú Compras", layout="wide")
-
-st.title("📊 SIAF Dashboard – Perú Compras")
+st.set_page_config(page_title="SIAF Dashboard - Peru Compras", layout="wide")
+st.title("📊 SIAF Dashboard - Peru Compras")
 
 st.markdown(
-    "Sube el **Excel del SIAF** (A:CH) y obtén resúmenes de **PIA, PIM, Certificado, Comprometido, Devengado, Girado y Pagado** "
-    "con filtros por **UE, programa, función, fuente, genérica, específica, meta**, etc. "
+    "Carga el **Excel SIAF** y genera resúmenes de PIA, PIM, Certificado, Comprometido, **Devengado**, Girado y Pagado. "
+    "Ademas, si tu archivo tiene columnas **desde CI hasta EC**, el app puede **replicar y/o recalcular** esos pasos."
 )
 
-# ---- Sidebar: carga y parámetros ----
+# ---- Sidebar: parametros ----
 with st.sidebar:
-    st.header("⚙️ Parámetros de lectura")
-    uploaded = st.file_uploader("Archivo SIAF (Excel .xlsx)", type=["xlsx"])
-    usecols = st.text_input("Rango de columnas (Excel)", "A:CH", help="Por defecto A:CH como mencionaste.")
-    sheet_name = st.text_input("Nombre de hoja (opcional)", "", help="Si se deja vacío, se autodetecta la hoja con 'ano_eje' y muchas columnas.")
+    st.header("⚙️ Parametros de lectura")
+    uploaded = st.file_uploader("Archivo SIAF (.xlsx)", type=["xlsx"])
+    usecols = st.text_input("Rango de columnas (Excel)", "A:EC", help="Base A:CH + calculos CI:EC, como pediste.")
+    sheet_name = st.text_input("Nombre de hoja (opcional)", "", help="Dejalo vacio para autodetectar la hoja de datos crudos.")
     header_row_excel = st.number_input(
         "Fila de encabezados (Excel, 1=primera)", min_value=1, value=4,
-        help="Tu caso típico es encabezados en la fila 4. Se intentará autodetección si no coincide."
+        help="Por defecto 4 (encabezados en fila 4)."
     )
-    detect_header = st.checkbox("Autodetectar encabezado", value=True, help="Usa heurística para encontrar la fila que contiene 'ano_eje', 'mto_pim', etc.")
+    detect_header = st.checkbox("Autodetectar encabezado", value=True)
     st.markdown("---")
-    st.caption("Consejo: si tu archivo tiene una hoja llamada **Hoja1** con los datos crudos, déjala seleccionada o en autodetección.")
+    st.header("🧮 Reglas CI-EC")
+    st.caption("Si no existen en tu archivo, las calculamos aqui.")
+    current_month = st.number_input("Mes actual (1-12)", min_value=1, max_value=12, value=9)
+    riesgo_umbral = st.number_input("Umbral de avance minimo (%)", min_value=0, max_value=100, value=60)
+    st.caption("Se marca riesgo_devolucion cuando Avance% < Umbral.")
 
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
-    # 1) Try user sheet first (if any)
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
     best = None
     for s in candidate_sheets:
         try:
-            # Read a few rows without header to scan
             tmp = pd.read_excel(excel_bytes, sheet_name=s, header=None, usecols=usecols, nrows=12)
         except Exception:
             continue
-        # find a row that looks like header: contains 'ano_eje' or several known tokens
         score_row = -1
         score_val = -1
         for r in range(min(8, len(tmp))):
@@ -48,11 +49,10 @@ def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_gu
             if hits > score_val:
                 score_val = hits
                 score_row = r
-        if score_val >= 2:  # looks good
+        if score_val >= 2:
             best = (s, score_row)
             break
     if best is None:
-        # fallback: try all sheets to pick the one with most columns when header at user guess-1
         fallback = []
         for s in xls.sheet_names:
             try:
@@ -76,62 +76,38 @@ def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=Tru
         hdr = header_row_excel - 1
         s = sheet_name if sheet_name else xls.sheet_names[0]
         df = pd.read_excel(excel_bytes, sheet_name=s, header=hdr, usecols=usecols)
-
-    # Clean
     df = df.dropna(how="all").dropna(axis=1, how="all")
-    # normalize colnames
     df.columns = [str(c).strip().lower() for c in df.columns]
     return df, s
 
 def find_monthly_columns(df, prefix):
-    # e.g., prefix = "mto_devenga_"
     pats = [f"{prefix}{i:02d}" for i in range(1, 13)]
     return [c for c in pats if c in df.columns]
 
-def smart_numeric(df, cols):
-    return df[cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+def ensure_ci_ec_steps(df, month, umbral):
+    """Asegura/calcula campos equivalentes a las logicas CI-EC (genericas)."""
+    df = df.copy()
 
-def build_summary(df):
-    # metric columns
-    base_cols = {
-        "pia": "mto_pia",
-        "pim": "mto_pim",
-        "certificado": "mto_certificado",
-        "comprometido": "mto_compro_anual",
-    }
-    present = {k: v for k, v in base_cols.items() if v in df.columns}
-
-    # monthly devengado / girado / pagado
     dev_cols = find_monthly_columns(df, "mto_devenga_")
-    gir_cols = find_monthly_columns(df, "mto_girado_")
-    pag_cols = find_monthly_columns(df, "mto_pagado_")
+    if "devengado" not in df.columns:
+        df["devengado"] = df[dev_cols].sum(axis=1) if dev_cols else 0.0
 
-    # numeric
-    num = {}
-    for k, col in present.items():
-        num[k] = df[col].sum()
+    col_mes = f"mto_devenga_{int(month):02d}"
+    if "devengado_mes" not in df.columns:
+        df["devengado_mes"] = df[col_mes] if col_mes in df.columns else 0.0
 
-    if dev_cols:
-        num["devengado"] = df[dev_cols].sum().sum()
-    else:
-        num["devengado"] = 0.0
-    if gir_cols:
-        num["girado"] = df[gir_cols].sum().sum()
-    else:
-        num["girado"] = 0.0
-    if pag_cols:
-        num["pagado"] = df[pag_cols].sum().sum()
-    else:
-        num["pagado"] = 0.0
+    if "saldo_pim" not in df.columns:
+        df["saldo_pim"] = np.where(df.get("mto_pim", 0) > 0, df["mto_pim"] - df["devengado"], 0.0)
+    if "avance_%" not in df.columns:
+        df["avance_%"] = np.where(df.get("mto_pim", 0) > 0, df["devengado"] / df["mto_pim"] * 100.0, 0.0)
 
-    pim = num.get("pim", 0.0)
-    dev = num.get("devengado", 0.0)
-    saldo = pim - dev if pim else 0.0
-    avance = (dev / pim * 100.0) if pim else 0.0
+    if "riesgo_devolucion" not in df.columns:
+        df["riesgo_devolucion"] = df["avance_%"] < float(umbral)
 
-    num["saldo_pim"] = saldo
-    num["avance_%"] = avance
-    return num, dev_cols, gir_cols, pag_cols
+    if "area" not in df.columns:
+        df["area"] = ""
+
+    return df
 
 def pivot_exec(df, group_col, dev_cols):
     cols = []
@@ -140,11 +116,9 @@ def pivot_exec(df, group_col, dev_cols):
     if "mto_certificado" in df.columns: cols.append("mto_certificado")
     if "mto_compro_anual" in df.columns: cols.append("mto_compro_anual")
     if dev_cols: cols.append("devengado")
-
     if "devengado" not in df.columns and dev_cols:
         df = df.copy()
         df["devengado"] = df[dev_cols].sum(axis=1)
-
     g = df.groupby(group_col, dropna=False)[cols].sum().reset_index()
     if "mto_pim" in g.columns and "devengado" in g.columns:
         g["saldo_pim"] = g["mto_pim"] - g["devengado"]
@@ -160,10 +134,9 @@ def to_excel_download(**dfs):
     return output
 
 if uploaded is None:
-    st.info("Sube tu archivo Excel SIAF para empezar. Puedes usar **A:CH** y **fila 4** como mencionaste.")
+    st.info("Sube tu archivo Excel SIAF para empezar. Usa A:EC si quieres incluir los pasos CI-EC.")
     st.stop()
 
-# Cargar datos
 excel_bytes = uploaded
 try:
     df, used_sheet = load_data(excel_bytes, usecols, sheet_name.strip() or None, int(header_row_excel), autodetect=detect_header)
@@ -171,15 +144,14 @@ except Exception as e:
     st.error(f"No pude leer el archivo: {e}")
     st.stop()
 
-st.success(f"Leída la hoja **{used_sheet}** con **{df.shape[0]}** filas y **{df.shape[1]}** columnas.")
+st.success(f"Leida la hoja **{used_sheet}** con **{df.shape[0]}** filas y **{df.shape[1]}** columnas.")
 
-# ---- Filtros dinámicos ----
+# Filtros
 st.subheader("🔍 Filtros")
 filter_cols = [c for c in df.columns if any(k in c for k in [
-    "unidad_ejecutora", "fuente_financ", "generica", "subgenerica", "subgenerica_det",
-    "especifica", "especifica_det", "funcion", "division_fn", "grupo_fn",
-    "programa_pptal", "producto_proyecto", "activ_obra_accinv", "meta", "sec_func",
-    "departamento_meta", "provincia_meta", "distrito_meta"
+    "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
+    "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
+    "producto_proyecto","activ_obra_accinv","meta","sec_func","departamento_meta","provincia_meta","distrito_meta"
 ])]
 
 cols1, cols2, cols3 = st.columns(3)
@@ -192,65 +164,61 @@ for i, c in enumerate(filter_cols):
             if chosen:
                 selected_filters[c] = set(chosen)
 
-# aplicar filtros
 mask = pd.Series([True] * len(df))
 for c, allowed in selected_filters.items():
     mask &= df[c].astype(str).isin(allowed)
 df_f = df[mask].copy()
 
-# ---- Resumen ejecutivo ----
+# Aplicar reglas CI-EC
+df_ci_ec = ensure_ci_ec_steps(df_f, current_month, riesgo_umbral)
+
+# Resumen
 st.subheader("📌 Resumen ejecutivo (totales)")
-summary, dev_cols, gir_cols, pag_cols = build_summary(df_f)
+dev_cols = [c for c in df_ci_ec.columns if c.startswith("mto_devenga_")]
+tot_pia = float(df_ci_ec.get("mto_pia", 0).sum())
+tot_pim = float(df_ci_ec.get("mto_pim", 0).sum())
+tot_dev = float(df_ci_ec.get("devengado", 0).sum())
+tot_cert = float(df_ci_ec.get("mto_certificado", 0).sum()) if "mto_certificado" in df_ci_ec.columns else 0.0
+tot_comp = float(df_ci_ec.get("mto_compro_anual", 0).sum()) if "mto_compro_anual" in df_ci_ec.columns else 0.0
+saldo_pim = tot_pim - tot_dev if tot_pim else 0.0
+avance = (tot_dev / tot_pim * 100.0) if tot_pim else 0.0
 
-kpi_cols = st.columns(6)
-kpis = [
-    ("PIA", "pia"),
-    ("PIM", "pim"),
-    ("Certificado", "certificado"),
-    ("Comprometido", "comprometido"),
-    ("Devengado (YTD)", "devengado"),
-    ("Saldo PIM", "saldo_pim"),
-]
-for i, (label, key) in enumerate(kpis):
-    with kpi_cols[i % 6]:
-        val = summary.get(key, 0.0)
-        st.metric(label, f"S/ {val:,.2f}")
+k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+k1.metric("PIA", f"S/ {tot_pia:,.2f}")
+k2.metric("PIM", f"S/ {tot_pim:,.2f}")
+k3.metric("Certificado", f"S/ {tot_cert:,.2f}")
+k4.metric("Comprometido", f"S/ {tot_comp:,.2f}")
+k5.metric("Devengado (YTD)", f"S/ {tot_dev:,.2f}")
+k6.metric("Saldo PIM", f"S/ {saldo_pim:,.2f}")
+k7.metric("Avance", f"{avance:.2f}%")
 
-st.metric("Avance de ejecución", f"{summary.get('avance_%', 0.0):.2f}%")
-
-# ---- Vistas por agrupación ----
-st.subheader("📈 Vistas por agrupación")
-group_options = [c for c in df_f.columns if c in [
+# Agrupaciones
+st.subheader("📈 Vistas por agrupacion")
+group_options = [c for c in df_ci_ec.columns if c in [
     "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
     "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
-    "producto_proyecto","activ_obra_accinv","meta","sec_func"
+    "producto_proyecto","activ_obra_accinv","meta","sec_func","area"
 ]]
 group_col = st.selectbox("Agrupar por", options=group_options, index=group_options.index("generica") if "generica" in group_options else 0)
-pivot = pivot_exec(df_f, group_col, dev_cols)
+pivot = pivot_exec(df_ci_ec, group_col, dev_cols)
+st.dataframe(pivot, use_container_width=True)
 
-st.dataframe(pivot)
+# Seccion CI-EC
+st.subheader("🧩 Procesos CI-EC")
+st.caption("Si tu Excel trae columnas en CI-EC, se muestran aqui. Si no, veras las columnas generadas: devengado_mes, saldo_pim, avance_%, riesgo_devolucion, area.")
+extra_cols = [c for c in ["devengado","devengado_mes","saldo_pim","avance_%","riesgo_devolucion","area"] if c in df_ci_ec.columns]
+st.dataframe(df_ci_ec[extra_cols].head(50))
 
-# descarga de pivote y datos filtrados
-dl1, dl2 = st.columns(2)
-with dl1:
-    buf = to_excel_download(Resumen=pivot, Datos_filtrados=df_f)
-    st.download_button("⬇️ Descargar Excel (resumen + datos filtrados)", data=buf, file_name="siaf_resumen.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# ---- Serie mensual de devengado ----
+# Serie mensual
 if dev_cols:
-    st.subheader("🗓️ Serie mensual – Devengado")
-    # armar serie
+    st.subheader("🗓️ Devengado mensual (por filtro)")
     month_map = {f"mto_devenga_{i:02d}": i for i in range(1,13)}
-    dev_series = df_f[dev_cols].sum().reset_index()
+    dev_series = df_ci_ec[dev_cols].sum().reset_index()
     dev_series.columns = ["col", "monto"]
     dev_series["mes"] = dev_series["col"].map(month_map)
     dev_series = dev_series.sort_values("mes")
-
-    # Mostrar como tabla y gráfico
     st.dataframe(dev_series[["mes","monto"]])
 
-    # gráfico simple con matplotlib (para evitar dependencias)
-    import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     ax.bar(dev_series["mes"].astype(int), dev_series["monto"].values)
     ax.set_xlabel("Mes")
@@ -258,5 +226,10 @@ if dev_cols:
     ax.set_title("Devengado mensual (acumulado por filtro)")
     st.pyplot(fig)
 
-st.caption("Tip: usa los filtros de la parte superior para ver el **avance %** por UE, genérica, específica, fuente, etc. "
-           "El botón de descarga incluye el resumen y los datos filtrados.")
+# Descarga
+buf = io.BytesIO()
+with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+    df_ci_ec.to_excel(writer, index=False, sheet_name="Datos_CI_EC")
+    pivot.to_excel(writer, index=False, sheet_name="Resumen")
+buf.seek(0)
+st.download_button("⬇️ Descargar Excel (Datos CI-EC + Resumen)", data=buf, file_name="siaf_ci_ec_resumen.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
