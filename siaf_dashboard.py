@@ -157,8 +157,8 @@ def build_classifier_columns(df):
     df["espdet_cod"] = espdet.map(extract_code) if "especifica_det" in df.columns else ""
 
     df["clasificador_cod"] = [
-        concat_hierarchy(gs, g, s, sd, e, ed)
-        for gs, g, s, sd, e, ed in zip(df["transf_cod"], df["gen_cod"], df["sub_cod"], df["subdet_cod"], df["esp_cod"], df["espdet_cod"])
+        concat_hierarchy(t, g, s, sd, e, ed)
+        for t, g, s, sd, e, ed in zip(df["transf_cod"], df["gen_cod"], df["sub_cod"], df["subdet_cod"], df["esp_cod"], df["espdet_cod"])
     ]
 
     def desc(text):
