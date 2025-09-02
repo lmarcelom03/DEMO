@@ -153,6 +153,10 @@ def build_classifier_columns(df):
     df["subdet_cod"] = subdet.map(extract_code) if "subgenerica_det" in df.columns else ""
     df["esp_cod"] = esp.map(extract_code) if "especifica" in df.columns else ""
     df["espdet_cod"] = espdet.map(extract_code) if "especifica_det" in df.columns else ""
+    def normalize_clasificador(code):
+    if not code:
+        return "2."
+    return code if code.startswith("2.") else "2." + code
 
     df["clasificador_cod"] = [
         concat_hierarchy(g, s, sd, e, ed)
