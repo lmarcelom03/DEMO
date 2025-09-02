@@ -12,7 +12,8 @@ st.title("📊 SIAF Dashboard - Peru Compras")
 
 st.markdown(
     "Carga el **Excel SIAF** y genera resúmenes de PIA, PIM, Certificado, Comprometido, **Devengado**, Girado y Pagado. "
-    "Ademas, si tu archivo tiene columnas **desde CI hasta EC**, el app puede **replicar y/o recalcular** esos pasos."
+    "Ademas, si tu archivo tiene columnas **desde CI hasta EC**, el app puede **replicar y/o recalcular** esos pasos. "
+    "Ahora tambien construye el **clasificador concatenado**: `generica.subgenerica.subgenerica_det.especifica.especifica_det`."
 )
 
 # ---- Sidebar: parametros ----
@@ -109,6 +110,76 @@ def ensure_ci_ec_steps(df, month, umbral):
 
     return df
 
+import pandas as pd
+
+_code_re = re.compile(r"^\s*(\d+(?:\.\d+)*)")
+def extract_code(text):
+    if pd.isna(text): 
+        return ""
+    s = str(text).strip()
+    m = _code_re.match(s)
+    return m.group(1) if m else ""
+
+def last_segment(code):
+    if not code: return ""
+    return code.split(".")[-1]
+
+def concat_hierarchy(gen, sub, subdet, esp, espdet):
+    parts = []
+    if gen: parts.append(gen)
+    for child in [sub, subdet, esp, espdet]:
+        if not child: 
+            continue
+        if parts and (child.startswith(parts[-1] + ".") or child.startswith(parts[0] + ".")):
+            parts.append(child)
+        else:
+            if parts:
+                parts.append(parts[-1] + "." + last_segment(child))
+            else:
+                parts.append(child)
+    full = parts[-1] if parts else ""
+    return full
+
+def build_classifier_columns(df):
+    df = df.copy()
+    gen = df.get("generica", "")
+    sub = df.get("subgenerica", "")
+    subdet = df.get("subgenerica_det", "")
+    esp = df.get("especifica", "")
+    espdet = df.get("especifica_det", "")
+
+    df["gen_cod"] = gen.map(extract_code) if "generica" in df.columns else ""
+    df["sub_cod"] = sub.map(extract_code) if "subgenerica" in df.columns else ""
+    df["subdet_cod"] = subdet.map(extract_code) if "subgenerica_det" in df.columns else ""
+    df["esp_cod"] = esp.map(extract_code) if "especifica" in df.columns else ""
+    df["espdet_cod"] = espdet.map(extract_code) if "especifica_det" in df.columns else ""
+
+    df["clasificador_cod"] = [
+        concat_hierarchy(g, s, sd, e, ed)
+        for g, s, sd, e, ed in zip(df["gen_cod"], df["sub_cod"], df["subdet_cod"], df["esp_cod"], df["espdet_cod"])
+    ]
+
+    def desc(text):
+        if pd.isna(text): return ""
+        s = str(text)
+        return s.split(".", 1)[1].strip() if "." in s else s
+
+    df["generica_desc"] = gen.map(desc) if "generica" in df.columns else ""
+    df["subgenerica_desc"] = sub.map(desc) if "subgenerica" in df.columns else ""
+    df["subgenerica_det_desc"] = subdet.map(desc) if "subgenerica_det" in df.columns else ""
+    df["especifica_desc"] = esp.map(desc) if "especifica" in df.columns else ""
+    df["especifica_det_desc"] = espdet.map(desc) if "especifica_det" in df.columns else ""
+
+    df["clasificador_desc"] = (
+        df["generica_desc"].fillna("")
+        + " > " + df["subgenerica_desc"].fillna("")
+        + " > " + df["subgenerica_det_desc"].fillna("")
+        + " > " + df["especifica_desc"].fillna("")
+        + " > " + df["especifica_det_desc"].fillna("")
+    ).str.strip(" >")
+
+    return df
+
 def pivot_exec(df, group_col, dev_cols):
     cols = []
     if "mto_pia" in df.columns: cols.append("mto_pia")
@@ -133,6 +204,7 @@ def to_excel_download(**dfs):
     output.seek(0)
     return output
 
+# ---- Carga ----
 if uploaded is None:
     st.info("Sube tu archivo Excel SIAF para empezar. Usa A:EC si quieres incluir los pasos CI-EC.")
     st.stop()
@@ -146,7 +218,7 @@ except Exception as e:
 
 st.success(f"Leida la hoja **{used_sheet}** con **{df.shape[0]}** filas y **{df.shape[1]}** columnas.")
 
-# Filtros
+# ---- Filtros
 st.subheader("🔍 Filtros")
 filter_cols = [c for c in df.columns if any(k in c for k in [
     "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
@@ -169,10 +241,11 @@ for c, allowed in selected_filters.items():
     mask &= df[c].astype(str).isin(allowed)
 df_f = df[mask].copy()
 
-# Aplicar reglas CI-EC
+# ---- CI-EC y clasificador ----
 df_ci_ec = ensure_ci_ec_steps(df_f, current_month, riesgo_umbral)
+df_ci_ec = build_classifier_columns(df_ci_ec)
 
-# Resumen
+# ---- Resumen ejecutivo
 st.subheader("📌 Resumen ejecutivo (totales)")
 dev_cols = [c for c in df_ci_ec.columns if c.startswith("mto_devenga_")]
 tot_pia = float(df_ci_ec.get("mto_pia", 0).sum())
@@ -192,24 +265,37 @@ k5.metric("Devengado (YTD)", f"S/ {tot_dev:,.2f}")
 k6.metric("Saldo PIM", f"S/ {saldo_pim:,.2f}")
 k7.metric("Avance", f"{avance:.2f}%")
 
-# Agrupaciones
+# ---- Agrupaciones
 st.subheader("📈 Vistas por agrupacion")
 group_options = [c for c in df_ci_ec.columns if c in [
-    "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
+    "clasificador_cod","unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
     "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
     "producto_proyecto","activ_obra_accinv","meta","sec_func","area"
 ]]
-group_col = st.selectbox("Agrupar por", options=group_options, index=group_options.index("generica") if "generica" in group_options else 0)
+default_idx = group_options.index("clasificador_cod") if "clasificador_cod" in group_options else 0
+group_col = st.selectbox("Agrupar por", options=group_options, index=default_idx)
 pivot = pivot_exec(df_ci_ec, group_col, dev_cols)
 st.dataframe(pivot, use_container_width=True)
 
-# Seccion CI-EC
-st.subheader("🧩 Procesos CI-EC")
-st.caption("Si tu Excel trae columnas en CI-EC, se muestran aqui. Si no, veras las columnas generadas: devengado_mes, saldo_pim, avance_%, riesgo_devolucion, area.")
-extra_cols = [c for c in ["devengado","devengado_mes","saldo_pim","avance_%","riesgo_devolucion","area"] if c in df_ci_ec.columns]
-st.dataframe(df_ci_ec[extra_cols].head(50))
+# ---- Procesos CI-EC: detalle por clasificador
+st.subheader("🧩 Procesos CI-EC (monto vinculado a su categoria)")
+ci_cols_show = [
+    "clasificador_cod", "generica", "subgenerica", "subgenerica_det", "especifica", "especifica_det",
+    "mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
+]
+ci_cols_show = [c for c in ci_cols_show if c in df_ci_ec.columns]
+st.caption("Cada monto queda enlazado a su cadena: generica.subgenerica.subgenerica_det.especifica.especifica_det")
+st.dataframe(df_ci_ec[ci_cols_show].head(50), use_container_width=True)
 
-# Serie mensual
+# ---- Tabla consolidada por clasificador (suma)
+agg_cols = [c for c in ["mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim"] if c in df_ci_ec.columns]
+consolidado = df_ci_ec.groupby(["clasificador_cod","generica","subgenerica","subgenerica_det","especifica","especifica_det"], dropna=False)[agg_cols].sum().reset_index()
+if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
+    consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
+st.markdown("**Consolidado por clasificador**")
+st.dataframe(consolidado.head(200), use_container_width=True)
+
+# ---- Serie mensual
 if dev_cols:
     st.subheader("🗓️ Devengado mensual (por filtro)")
     month_map = {f"mto_devenga_{i:02d}": i for i in range(1,13)}
@@ -226,10 +312,11 @@ if dev_cols:
     ax.set_title("Devengado mensual (acumulado por filtro)")
     st.pyplot(fig)
 
-# Descarga
+# ---- Descarga
 buf = io.BytesIO()
 with pd.ExcelWriter(buf, engine="openpyxl") as writer:
     df_ci_ec.to_excel(writer, index=False, sheet_name="Datos_CI_EC")
     pivot.to_excel(writer, index=False, sheet_name="Resumen")
+    consolidado.to_excel(writer, index=False, sheet_name="Consolidado_Clasificador")
 buf.seek(0)
-st.download_button("⬇️ Descargar Excel (Datos CI-EC + Resumen)", data=buf, file_name="siaf_ci_ec_resumen.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+st.download_button("⬇️ Descargar Excel (CI-EC + Resumen + Clasificador)", data=buf, file_name="siaf_ci_ec_clasificador.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
