@@ -1,9 +1,85 @@
+
 import re
 import io
+import json
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+
+st.set_page_config(page_title="SIAF Dashboard - Peru Compras", layout="wide")
+st.title("📊 SIAF Dashboard - Peru Compras")
+
+st.markdown(
+    "Carga el **Excel SIAF** y genera resúmenes de PIA, PIM, Certificado, Comprometido, **Devengado**, Girado y Pagado. "
+    "Ademas, si tu archivo tiene columnas **desde CI hasta EC**, el app puede **replicar y/o recalcular** esos pasos. "
+    "Ahora tambien construye el **clasificador concatenado**: `generica.subgenerica.subgenerica_det.especifica.especifica_det`."
+)
+
+# ---- Sidebar: parametros ----
+with st.sidebar:
+    st.header("⚙️ Parametros de lectura")
+    uploaded = st.file_uploader("Archivo SIAF (.xlsx)", type=["xlsx"])
+    usecols = st.text_input("Rango de columnas (Excel)", "A:EC", help="Base A:CH + calculos CI:EC, como pediste.")
+    sheet_name = st.text_input("Nombre de hoja (opcional)", "", help="Dejalo vacio para autodetectar la hoja de datos crudos.")
+    header_row_excel = st.number_input(
+        "Fila de encabezados (Excel, 1=primera)", min_value=1, value=4,
+        help="Por defecto 4 (encabezados en fila 4)."
+    )
+    detect_header = st.checkbox("Autodetectar encabezado", value=True)
+    st.markdown("---")
+    st.header("🧮 Reglas CI-EC")
+    st.caption("Si no existen en tu archivo, las calculamos aqui.")
+    current_month = st.number_input("Mes actual (1-12)", min_value=1, max_value=12, value=9)
+    riesgo_umbral = st.number_input("Umbral de avance minimo (%)", min_value=0, max_value=100, value=60)
+    st.caption("Se marca riesgo_devolucion cuando Avance% < Umbral.")
+
+def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
+    candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
+    best = None
+    for s in candidate_sheets:
+        try:
+            tmp = pd.read_excel(excel_bytes, sheet_name=s, header=None, usecols=usecols, nrows=12)
+        except Exception:
+            continue
+        score_row = -1
+        score_val = -1
+        for r in range(min(8, len(tmp))):
+            row_vals = tmp.iloc[r].astype(str).str.lower().tolist()
+            hits = sum(int(any(k in v for k in ["ano_eje", "pim", "pia", "mto_", "devenga", "girado"])) for v in row_vals)
+            if hits > score_val:
+                score_val = hits
+                score_row = r
+        if score_val >= 2:
+            best = (s, score_row)
+            break
+    if best is None:
+        fallback = []
+        for s in xls.sheet_names:
+            try:
+                df = pd.read_excel(excel_bytes, sheet_name=s, header=header_guess-1, usecols=usecols)
+                fallback.append((s, df.shape[0], df.shape[1]))
+            except Exception:
+                continue
+        if fallback:
+            fallback.sort(key=lambda x: (x[2], x[1]), reverse=True)
+            best = (fallback[0][0], header_guess-1)
+        else:
+            best = (xls.sheet_names[0], header_guess-1)
+    return best
+
+def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=True):
+    xls = pd.ExcelFile(excel_bytes)
+    if autodetect:
+        s, hdr = autodetect_sheet_and_header(xls, excel_bytes, usecols, sheet_name, header_row_excel)
+        df = pd.read_excel(excel_bytes, sheet_name=s, header=hdr, usecols=usecols)
+    else:
+        hdr = header_row_excel - 1
+        s = sheet_name if sheet_name else xls.sheet_names[0]
+        df = pd.read_excel(excel_bytes, sheet_name=s, header=hdr, usecols=usecols)
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+    s = str(text).strip()
+    m = _code_re.match(s)
 
 st.set_page_config(page_title="SIAF Dashboard - Peru Compras", layout="wide")
 st.title("📊 SIAF Dashboard - Peru Compras")
