@@ -39,6 +39,29 @@ with st.sidebar:
     meta_avance = st.number_input("Meta de avance al cierre (%)", min_value=0, max_value=100, value=95)
     st.caption("Se marca riesgo_devolucion si Avance% < Umbral.")
 
+# Mapeo de códigos de sec_func a nombres
+SEC_FUNC_MAP = {
+    1: "PI_2",
+    2: "DCEME",
+    3: "DE",
+    4: "PI_1",
+    5: "OPP",
+    6: "JEF",
+    7: "GG",
+    8: "OAUGD",
+    9: "OTI",
+    10: "OA",
+    11: "OC",
+    12: "OAJ",
+    13: "RRHH",
+    14: "OCI",
+    15: "DCEME15",
+    16: "DETN16",
+    21: "DETN21",
+    22: "DETN22",
+}
+SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
+
 # =========================
 # Utilitarios de carga
 # =========================
@@ -142,11 +165,9 @@ def concat_hierarchy(gen, sub, subdet, esp, espdet):
     for child in [sub, subdet, esp, espdet]:
         if not child:
             continue
-        # Si el hijo ya trae el prefijo, lo conservamos
         if parts and (child.startswith(parts[-1] + ".") or child.startswith(parts[0] + ".")):
             parts.append(child)
         else:
-            # Caso contrario, agregamos solo el último segmento al prefijo anterior
             if parts:
                 parts.append(parts[-1] + "." + last_segment(child))
             else:
@@ -198,7 +219,6 @@ def build_classifier_columns(df):
         )
     ]
 
-    # Descripciones sin código
     df["generica_desc"] = gen.map(desc_only) if "generica" in df.columns else ""
     df["subgenerica_desc"] = sub.map(desc_only) if "subgenerica" in df.columns else ""
     df["subgenerica_det_desc"] = subdet.map(desc_only) if "subgenerica_det" in df.columns else ""
@@ -231,7 +251,6 @@ def pivot_exec(df, group_col, dev_cols):
     if dev_cols:
         cols.append("devengado")
 
-    # Si no existía 'devengado' pero hay columnas mensuales, lo armamos en copia
     if "devengado" not in df.columns and dev_cols:
         df = df.copy()
         df["devengado"] = df[dev_cols].sum(axis=1)
@@ -258,11 +277,11 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         ws_av.append(r)
 
     chart = BarChart()
-    data = Reference(ws_av, min_col=3, min_row=1, max_row=ws_av.max_row, max_col=3)
+    data = Reference(ws_av, min_col=2, min_row=1, max_row=ws_av.max_row, max_col=2)
     cats = Reference(ws_av, min_col=1, min_row=2, max_row=ws_av.max_row)
     chart.add_data(data, titles_from_data=True)
     chart.set_categories(cats)
-    chart.title = "Contribución mensual (%)"
+    chart.title = "Avance mensual (%)"
     chart.y_axis.title = "%"
     chart.x_axis.title = "Mes"
     chart.height = 7
