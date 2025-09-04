@@ -258,11 +258,11 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         ws_av.append(r)
 
     chart = BarChart()
-    data = Reference(ws_av, min_col=2, min_row=1, max_row=ws_av.max_row, max_col=2)
+    data = Reference(ws_av, min_col=3, min_row=1, max_row=ws_av.max_row, max_col=3)
     cats = Reference(ws_av, min_col=1, min_row=2, max_row=ws_av.max_row)
     chart.add_data(data, titles_from_data=True)
     chart.set_categories(cats)
-    chart.title = "Avance mensual (%)"
+    chart.title = "Contribución mensual (%)"
     chart.y_axis.title = "%"
     chart.x_axis.title = "Mes"
     chart.height = 7
@@ -462,26 +462,29 @@ if dev_cols and "mto_pim" in df_proc.columns:
     dev_series["mes"] = dev_series["col"].map(month_map)
     dev_series = dev_series.sort_values("mes")
     pim_total = df_proc["mto_pim"].sum()
-    dev_series["acum"] = dev_series["monto"].cumsum()
-    dev_series["avance_pct"] = np.where(pim_total > 0, dev_series["acum"] / pim_total * 100.0, 0.0)
-    dev_series["riesgo"] = dev_series["avance_pct"] < float(riesgo_umbral)
-    avance_series = dev_series[["mes", "avance_pct"]]
+    dev_series["contrib_pct"] = np.where(pim_total > 0, dev_series["monto"] / pim_total * 100.0, 0.0)
+    dev_series["riesgo"] = dev_series["contrib_pct"] < float(riesgo_umbral)
+    avance_series = dev_series[["mes", "monto", "contrib_pct"]]
     chart = (
         alt.Chart(dev_series)
         .mark_bar()
         .encode(
             x=alt.X("mes:O", title="Mes"),
-            y=alt.Y("avance_pct:Q", title="% Avance"),
+            y=alt.Y("contrib_pct:Q", title="% contribución"),
             color=alt.condition(alt.datum.riesgo, alt.value("#ff6961"), alt.value("#1f77b4")),
-            tooltip=["mes", alt.Tooltip("avance_pct", format=".2f")],
+            tooltip=[
+                "mes",
+                alt.Tooltip("monto", title="Devengado", format=","),
+                alt.Tooltip("contrib_pct", title="Contrib. %", format=".2f"),
+            ],
         )
-        .properties(width=650, height=300)
+        .properties(width=600, height=250)
     )
     st.altair_chart(chart, use_container_width=False)
     st.dataframe(
         avance_series.style.applymap(
             lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-            subset=["avance_pct"],
+            subset=["contrib_pct"],
         ),
         use_container_width=True,
     )
