@@ -1,3 +1,5 @@
+!pip install scikit-learn
+
 import re
 import io
 import numpy as np
