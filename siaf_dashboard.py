@@ -8,6 +8,8 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 # =========================
 # Configuración de la app
@@ -184,7 +186,7 @@ def normalize_clasificador(code):
     """
     if not code:
         return "2."
-    return code if code.startswith("2.") else "2." + code
+    return code if it.startswith("2.") else "2." + code
 
 def desc_only(text):
     """Devuelve solo la descripción (lo que va después del primer punto)."""
@@ -275,10 +277,18 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         ws_res.append(r)
     for cell in ws_res[1]:
         cell.font = Font(bold=True)
+    tab = Table(displayName="ResumenTable",
+                ref=f"A1:{get_column_letter(ws_res.max_column)}{ws_res.max_row}")
+    tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws_res.add_table(tab)
 
     ws_av = wb.create_sheet("Avance")
     for r in dataframe_to_rows(avance, index=False, header=True):
         ws_av.append(r)
+    tab_av = Table(displayName="AvanceTable",
+                   ref=f"A1:{get_column_letter(ws_av.max_column)}{ws_av.max_row}")
+    tab_av.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws_av.add_table(tab_av)
 
     chart = BarChart()
     data = Reference(ws_av, min_col=3, min_row=1, max_row=ws_av.max_row, max_col=3)
@@ -296,6 +306,11 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         ws_proj = wb.create_sheet("Proyeccion")
         for r in dataframe_to_rows(proyeccion, index=False, header=True):
             ws_proj.append(r)
+        tab_proj = Table(displayName="ProyeccionTable",
+                         ref=f"A1:{get_column_letter(ws_proj.max_column)}{ws_proj.max_row}")
+        tab_proj.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+        ws_proj.add_table(tab_proj)
+
         chart2 = BarChart()
         data2 = Reference(ws_proj, min_col=2, min_row=1, max_row=ws_proj.max_row, max_col=ws_proj.max_column)
         cats2 = Reference(ws_proj, min_col=1, min_row=2, max_row=ws_proj.max_row)
@@ -312,6 +327,11 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         ws_rit = wb.create_sheet("Ritmo")
         for r in dataframe_to_rows(ritmo, index=False, header=True):
             ws_rit.append(r)
+        tab_rit = Table(displayName="RitmoTable",
+                        ref=f"A1:{get_column_letter(ws_rit.max_column)}{ws_rit.max_row}")
+        tab_rit.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+        ws_rit.add_table(tab_rit)
+
         chart3 = BarChart()
         data3 = Reference(ws_rit, min_col=2, min_row=1, max_row=ws_rit.max_row, max_col=ws_rit.max_column)
         cats3 = Reference(ws_rit, min_col=1, min_row=2, max_row=ws_rit.max_row)
@@ -343,11 +363,6 @@ except Exception as e:
     st.stop()
 
 st.success(f"Leída la hoja '{used_sheet}' con {df.shape[0]} filas y {df.shape[1]} columnas.")
-
-if "sec_func" in df.columns:
-    df["sec_func"] = df["sec_func"].apply(
-        lambda x: SEC_FUNC_MAP.get(int(x), SEC_FUNC_MAP.get(str(x), x)) if pd.notna(x) else x
-    )
 
 # =========================
 # Filtros
