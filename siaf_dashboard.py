@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+from openpyxl.drawing.image import Image
+from openpyxl import load_workbook
 
 # =========================
 # Configuración de la app
@@ -239,15 +241,15 @@ def pivot_exec(df, group_col, dev_cols):
 
     return g
 
-def to_excel_download(**dfs):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for name, d in dfs.items():
-            # Trunca el nombre de hoja a 31 chars (límite Excel)
-            sheet = name[:31] or "Sheet1"
-            d.to_excel(writer, index=False, sheet_name=sheet)
-    output.seek(0)
-    return output
+# =========================
+# Styling Function
+# =========================
+def highlight_risk(row, umbral):
+    """Highlights rows where 'avance_%' is below the specified umbral."""
+    if 'avance_%' in row and isinstance(row['avance_%'], (int, float)) and row['avance_%'] < umbral:
+        return ['background-color: yellow'] * len(row)
+    return [''] * len(row)
+
 
 # =========================
 # Carga del archivo
@@ -320,7 +322,7 @@ k6.metric("Saldo PIM", f"S/ {saldo_pim:,.2f}")
 k7.metric("Avance", f"{avance:.2f}%")
 
 # =========================
-# Vistas por agrupación
+# Vistas por agrupación con highlighting
 # =========================
 st.subheader("Vistas por agrupación")
 group_options = [c for c in df_proc.columns if c in [
@@ -332,10 +334,11 @@ default_idx = group_options.index("clasificador_cod") if "clasificador_cod" in g
 group_col = st.selectbox("Agrupar por", options=group_options, index=default_idx)
 
 pivot = pivot_exec(df_proc, group_col, dev_cols)
-st.dataframe(pivot, use_container_width=True)
+styled_pivot = pivot.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
+st.dataframe(styled_pivot, width='stretch') # Updated width
 
 # =========================
-# Procesos CI–EC (detalle)
+# Procesos CI–EC (detalle) con highlighting
 # =========================
 st.subheader("Procesos CI–EC (monto vinculado a su cadena)")
 ci_cols = [
@@ -345,10 +348,12 @@ ci_cols = [
     "devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
 ]
 ci_cols = [c for c in ci_cols if c in df_proc.columns]
-st.dataframe(df_proc[ci_cols].head(300), use_container_width=True)
+ci_cols_df_head = df_proc[ci_cols].head(300).copy()
+styled_ci_cols_df_head = ci_cols_df_head.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
+st.dataframe(styled_ci_cols_df_head, width='stretch') # Updated width
 
 # =========================
-# Consolidado por clasificador
+# Consolidado por clasificador con highlighting
 # =========================
 agg_cols = [c for c in ["mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim"] if c in df_proc.columns]
 consolidado = df_proc.groupby(
@@ -360,39 +365,97 @@ if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
     consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
 
 st.markdown("**Consolidado por clasificador**")
-st.dataframe(consolidado.head(500), use_container_width=True)
+consolidado_head = consolidado.head(500)
+styled_consolidado_head = consolidado_head.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
+st.dataframe(styled_consolidado_head, width='stretch') # Updated width
+
 
 # =========================
-# Serie mensual de devengado
+# Serie mensual de devengado (dinámica e interactiva)
 # =========================
 if dev_cols:
     st.subheader("Devengado mensual (por filtro actual)")
+
+    # Add filter for the selected group_col
+    all_categories = ["Todos"] + sorted(df_proc[group_col].dropna().unique().tolist())
+    selected_category = st.selectbox(f"Filtrar por {group_col}", options=all_categories, index=0)
+
+    if selected_category != "Todos":
+        df_dev_filtered = df_proc[df_proc[group_col] == selected_category].copy()
+    else:
+        df_dev_filtered = df_proc.copy()
+
     month_map = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
-    dev_series = df_proc[dev_cols].sum().reset_index()
+    dev_series = df_dev_filtered[dev_cols].sum().reset_index()
     dev_series.columns = ["col", "monto"]
     dev_series["mes"] = dev_series["col"].map(month_map)
     dev_series = dev_series.sort_values("mes")
-    st.dataframe(dev_series[["mes", "monto"]], use_container_width=True)
+    st.dataframe(dev_series[["mes", "monto"]], width='stretch') # Updated width
 
-    # Gráfico de barras simple con matplotlib (sin estilos personalizados)
-    fig, ax = plt.subplots()
+    # Gráfico de barras simple con matplotlib (tamaño ajustado)
+    fig, ax = plt.subplots(figsize=(12, 7)) # Adjusted figure size
     ax.bar(dev_series["mes"].astype(int), dev_series["monto"].values)
     ax.set_xlabel("Mes")
     ax.set_ylabel("Devengado (S/)")
-    ax.set_title("Devengado mensual (acumulado por filtro)")
+    ax.set_title(f"Devengado mensual (acumulado para '{selected_category}' en '{group_col}')" if selected_category != "Todos" else "Devengado mensual (acumulado por filtro actual)")
     st.pyplot(fig)
 
 # =========================
-# Descarga a Excel
+# Descarga a Excel (Modificada)
 # =========================
-buf = to_excel_download(
-    Datos_filtrados_CI_EC=df_proc,
-    Resumen=pivot,
-    Consolidado_Clasificador=consolidado
-)
-st.download_button(
-    "Descargar Excel (CI–EC + Resumen + Clasificador)",
-    data=buf,
-    file_name="siaf_ci_ec_clasificador.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+def to_excel_download_modified(df_proc, pivot, consolidado, dev_series, fig, group_col, riesgo_umbral):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+        # Add the plot image to a sheet
+        workbook = writer.book
+        if "Grafico Mensual" not in workbook.sheetnames:
+             workbook.create_sheet("Grafico Mensual")
+        ws_plot = workbook["Grafico Mensual"]
+
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png')
+        img_buffer.seek(0)
+        plt.close(fig) # Close the figure to free memory
+
+        img = Image(img_buffer)
+        ws_plot.add_image(img, 'A1')
+
+        # Create and format the executive summary table based on pivot
+        executive_summary_cols = [col for col in ['clasificador_cod', 'clasificador_desc', group_col, 'mto_pia', 'mto_pim', 'mto_certificado', 'mto_compro_anual', 'devengado', 'saldo_pim', 'avance_%'] if col in pivot.columns]
+        executive_summary_df = pivot[executive_summary_cols].copy()
+
+        # Apply highlighting to the executive summary table data before writing
+        styled_executive_summary_df = executive_summary_df.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
+
+        # Write the styled executive summary DataFrame to a new sheet
+        # Note: Writing a styled DataFrame directly to Excel might lose some formatting.
+        # A common approach is to write the raw data and apply formatting using openpyxl
+        # after writing. For simplicity here, we'll write the raw data and mention this limitation.
+        executive_summary_df.to_excel(writer, index=False, sheet_name="Resumen Ejecutivo")
+
+        # Optional: Add a note in the Excel about the styling not being preserved automatically
+        # ws_summary = workbook["Resumen Ejecutivo"]
+        # ws_summary['A1'] = "Note: Conditional highlighting from the app is not preserved in this raw data export."
+
+
+    output.seek(0)
+    return output
+
+# Download button using the modified function
+if uploaded is not None and 'df_proc' in locals() and 'pivot' in locals() and 'dev_series' in locals() and 'fig' in locals():
+    buf_modified = to_excel_download_modified(
+        df_proc=df_proc,
+        pivot=pivot,
+        consolidado=consolidado, # consolidado is included for potential future use, but not written in this modified function
+        dev_series=dev_series,
+        fig=fig,
+        group_col=group_col,
+        riesgo_umbral=riesgo_umbral
+    )
+    st.download_button(
+        "Descargar Excel (Gráfico y Resumen Ejecutivo)",
+        data=buf_modified,
+        file_name="siaf_analisis_ejecutivo.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
