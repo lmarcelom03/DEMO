@@ -3,7 +3,11 @@ import io
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import altair as alt
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.chart import BarChart, Reference
+from openpyxl.styles import Font
 
 # =========================
 # Configuración de la app
@@ -239,13 +243,33 @@ def pivot_exec(df, group_col, dev_cols):
 
     return g
 
-def to_excel_download(**dfs):
+def to_excel_download(resumen, avance):
+    wb = Workbook()
+    ws_res = wb.active
+    ws_res.title = "Resumen"
+    for r in dataframe_to_rows(resumen, index=False, header=True):
+        ws_res.append(r)
+    for cell in ws_res[1]:
+        cell.font = Font(bold=True)
+
+    ws_av = wb.create_sheet("Avance")
+    for r in dataframe_to_rows(avance, index=False, header=True):
+        ws_av.append(r)
+
+    chart = BarChart()
+    data = Reference(ws_av, min_col=2, min_row=1, max_row=ws_av.max_row, max_col=2)
+    cats = Reference(ws_av, min_col=1, min_row=2, max_row=ws_av.max_row)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+    chart.title = "Avance mensual (%)"
+    chart.y_axis.title = "%"
+    chart.x_axis.title = "Mes"
+    chart.height = 7
+    chart.width = 15
+    ws_av.add_chart(chart, "E2")
+
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for name, d in dfs.items():
-            # Trunca el nombre de hoja a 31 chars (límite Excel)
-            sheet = name[:31] or "Sheet1"
-            d.to_excel(writer, index=False, sheet_name=sheet)
+    wb.save(output)
     output.seek(0)
     return output
 
@@ -332,7 +356,13 @@ default_idx = group_options.index("clasificador_cod") if "clasificador_cod" in g
 group_col = st.selectbox("Agrupar por", options=group_options, index=default_idx)
 
 pivot = pivot_exec(df_proc, group_col, dev_cols)
-st.dataframe(pivot, use_container_width=True)
+pivot_display = pivot
+if "avance_%" in pivot_display.columns:
+    pivot_display = pivot_display.style.applymap(
+        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+        subset=["avance_%"],
+    )
+st.dataframe(pivot_display, use_container_width=True)
 
 # =========================
 # Procesos CI–EC (detalle)
@@ -345,7 +375,13 @@ ci_cols = [
     "devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
 ]
 ci_cols = [c for c in ci_cols if c in df_proc.columns]
-st.dataframe(df_proc[ci_cols].head(300), use_container_width=True)
+df_ci = df_proc[ci_cols].head(300)
+if "avance_%" in df_ci.columns:
+    df_ci = df_ci.style.applymap(
+        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+        subset=["avance_%"],
+    )
+st.dataframe(df_ci, use_container_width=True)
 
 # =========================
 # Consolidado por clasificador
@@ -360,39 +396,57 @@ if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
     consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
 
 st.markdown("**Consolidado por clasificador**")
-st.dataframe(consolidado.head(500), use_container_width=True)
+consol_display = consolidado.head(500)
+if "avance_%" in consol_display.columns:
+    consol_display = consol_display.style.applymap(
+        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+        subset=["avance_%"],
+    )
+st.dataframe(consol_display, use_container_width=True)
 
 # =========================
-# Serie mensual de devengado
+# Serie mensual interactiva
 # =========================
-if dev_cols:
-    st.subheader("Devengado mensual (por filtro actual)")
+avance_series = pd.DataFrame()
+if dev_cols and "mto_pim" in df_proc.columns:
+    st.subheader("Avance mensual interactivo")
     month_map = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
     dev_series = df_proc[dev_cols].sum().reset_index()
     dev_series.columns = ["col", "monto"]
     dev_series["mes"] = dev_series["col"].map(month_map)
     dev_series = dev_series.sort_values("mes")
-    st.dataframe(dev_series[["mes", "monto"]], use_container_width=True)
-
-    # Gráfico de barras simple con matplotlib (sin estilos personalizados)
-    fig, ax = plt.subplots()
-    ax.bar(dev_series["mes"].astype(int), dev_series["monto"].values)
-    ax.set_xlabel("Mes")
-    ax.set_ylabel("Devengado (S/)")
-    ax.set_title("Devengado mensual (acumulado por filtro)")
-    st.pyplot(fig)
+    pim_total = df_proc["mto_pim"].sum()
+    dev_series["acum"] = dev_series["monto"].cumsum()
+    dev_series["avance_pct"] = np.where(pim_total > 0, dev_series["acum"] / pim_total * 100.0, 0.0)
+    dev_series["riesgo"] = dev_series["avance_pct"] < float(riesgo_umbral)
+    avance_series = dev_series[["mes", "avance_pct"]]
+    chart = (
+        alt.Chart(dev_series)
+        .mark_bar()
+        .encode(
+            x=alt.X("mes:O", title="Mes"),
+            y=alt.Y("avance_pct:Q", title="% Avance"),
+            color=alt.condition(alt.datum.riesgo, alt.value("#ff6961"), alt.value("#1f77b4")),
+            tooltip=["mes", alt.Tooltip("avance_pct", format=".2f")],
+        )
+        .properties(width=700, height=300)
+    )
+    st.altair_chart(chart, use_container_width=False)
+    st.dataframe(
+        avance_series.style.applymap(
+            lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+            subset=["avance_pct"],
+        ),
+        use_container_width=True,
+    )
 
 # =========================
 # Descarga a Excel
 # =========================
-buf = to_excel_download(
-    Datos_filtrados_CI_EC=df_proc,
-    Resumen=pivot,
-    Consolidado_Clasificador=consolidado
-)
+buf = to_excel_download(resumen=pivot, avance=avance_series)
 st.download_button(
-    "Descargar Excel (CI–EC + Resumen + Clasificador)",
+    "Descargar Excel (Resumen + Avance)",
     data=buf,
-    file_name="siaf_ci_ec_clasificador.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    file_name="siaf_resumen_avance.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
