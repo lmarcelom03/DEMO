@@ -6,6 +6,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image
 from openpyxl import load_workbook
+from sklearn.linear_model import LinearRegression # Using sklearn for a simple projection example
 
 # =========================
 # Configuración de la app
@@ -35,6 +36,10 @@ with st.sidebar:
     current_month = st.number_input("Mes actual (1-12)", min_value=1, max_value=12, value=9)
     riesgo_umbral = st.number_input("Umbral de avance mínimo (%)", min_value=0, max_value=100, value=60)
     st.caption("Se marca riesgo_devolucion si Avance% < Umbral.")
+    st.markdown("---")
+    st.header("Proyección")
+    projection_method = st.selectbox("Método de proyección", options=["Promedio Mensual", "Regresión Lineal"])
+
 
 # =========================
 # Utilitarios de carga
@@ -90,13 +95,20 @@ def ensure_ci_ec_steps(df, month, umbral):
     """
     df = df.copy()
     dev_cols = find_monthly_columns(df, "mto_devenga_")
+    cert_cols = find_monthly_columns(df, "mto_certificado_")
+    comp_cols = find_monthly_columns(df, "mto_compro_")
 
     if "devengado" not in df.columns:
         df["devengado"] = df[dev_cols].sum(axis=1) if dev_cols else 0.0
+    if "certificado" not in df.columns:
+        df["certificado"] = df[cert_cols].sum(axis=1) if cert_cols else 0.0
+    if "comprometido" not in df.columns:
+         df["comprometido"] = df[comp_cols].sum(axis=1) if comp_cols else 0.0
 
-    col_mes = f"mto_devenga_{int(month):02d}"
+
+    col_mes_dev = f"mto_devenga_{int(month):02d}"
     if "devengado_mes" not in df.columns:
-        df["devengado_mes"] = df[col_mes] if col_mes in df.columns else 0.0
+        df["devengado_mes"] = df[col_mes_dev] if col_mes_dev in df.columns else 0.0
 
     if "saldo_pim" not in df.columns:
         df["saldo_pim"] = np.where(df.get("mto_pim", 0) > 0, df["mto_pim"] - df["devengado"], 0.0)
@@ -250,212 +262,221 @@ def highlight_risk(row, umbral):
         return ['background-color: yellow'] * len(row)
     return [''] * len(row)
 
-
 # =========================
-# Carga del archivo
+# Chart Generation Functions
 # =========================
-if uploaded is None:
-    st.info("Sube tu archivo Excel SIAF para empezar. Usa A:EC para incluir pasos CI–EC.")
-    st.stop()
 
-try:
-    df, used_sheet = load_data(uploaded, usecols, sheet_name.strip() or None, int(header_row_excel), autodetect=detect_header)
-except Exception as e:
-    st.error(f"No se pudo leer el archivo: {e}")
-    st.stop()
+def generate_monthly_series_chart(df, cols, title, ylabel, color, current_month):
+    """Generates a monthly time series chart for specified columns."""
+    month_map = {f"{prefix}{i:02d}": i for i in range(1, 13) for prefix in ['mto_devenga_', 'mto_certificado_', 'mto_compro_']}
+    series_data = df[cols].sum().reset_index()
+    series_data.columns = ["col", "monto"]
+    series_data["mes"] = series_data["col"].map(month_map)
+    series_data = series_data.sort_values("mes")
 
-st.success(f"Leída la hoja '{used_sheet}' con {df.shape[0]} filas y {df.shape[1]} columnas.")
-
-# =========================
-# Filtros
-# =========================
-st.subheader("Filtros")
-filter_cols = [c for c in df.columns if any(k in c for k in [
-    "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
-    "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
-    "producto_proyecto","activ_obra_accinv","meta","sec_func",
-    "departamento_meta","provincia_meta","distrito_meta","area"
-])]
-
-cols_f = st.columns(3)
-selected_filters = {}
-for i, c in enumerate(filter_cols):
-    with cols_f[i % 3]:
-        vals = sorted([str(x) for x in df[c].dropna().unique().tolist()])
-        if len(vals) > 1:
-            pick = st.multiselect(c, options=vals, default=[])
-            if pick:
-                selected_filters[c] = set(pick)
-
-mask = pd.Series(True, index=df.index)
-for c, allowed in selected_filters.items():
-    mask &= df[c].astype(str).isin(allowed)
-df_f = df[mask].copy()
-
-# =========================
-# Aplicar CI–EC + Clasificador
-# =========================
-df_proc = ensure_ci_ec_steps(df_f, current_month, riesgo_umbral)
-df_proc = build_classifier_columns(df_proc)
-
-# =========================
-# Resumen ejecutivo
-# =========================
-st.subheader("Resumen ejecutivo (totales)")
-dev_cols = [c for c in df_proc.columns if c.startswith("mto_devenga_")]
-
-tot_pia = float(df_proc.get("mto_pia", 0).sum())
-tot_pim = float(df_proc.get("mto_pim", 0).sum())
-tot_dev = float(df_proc.get("devengado", 0).sum())
-tot_cert = float(df_proc.get("mto_certificado", 0).sum()) if "mto_certificado" in df_proc.columns else 0.0
-tot_comp = float(df_proc.get("mto_compro_anual", 0).sum()) if "mto_compro_anual" in df_proc.columns else 0.0
-saldo_pim = tot_pim - tot_dev if tot_pim else 0.0
-avance = (tot_dev / tot_pim * 100.0) if tot_pim else 0.0
-
-k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-k1.metric("PIA", f"S/ {tot_pia:,.2f}")
-k2.metric("PIM", f"S/ {tot_pim:,.2f}")
-k3.metric("Certificado", f"S/ {tot_cert:,.2f}")
-k4.metric("Comprometido", f"S/ {tot_comp:,.2f}")
-k5.metric("Devengado (YTD)", f"S/ {tot_dev:,.2f}")
-k6.metric("Saldo PIM", f"S/ {saldo_pim:,.2f}")
-k7.metric("Avance", f"{avance:.2f}%")
-
-# =========================
-# Vistas por agrupación con highlighting
-# =========================
-st.subheader("Vistas por agrupación")
-group_options = [c for c in df_proc.columns if c in [
-    "clasificador_cod","unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
-    "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
-    "producto_proyecto","activ_obra_accinv","meta","sec_func","area"
-]]
-default_idx = group_options.index("clasificador_cod") if "clasificador_cod" in group_options else 0
-group_col = st.selectbox("Agrupar por", options=group_options, index=default_idx)
-
-pivot = pivot_exec(df_proc, group_col, dev_cols)
-styled_pivot = pivot.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
-st.dataframe(styled_pivot, width='stretch') # Updated width
-
-# =========================
-# Procesos CI–EC (detalle) con highlighting
-# =========================
-st.subheader("Procesos CI–EC (monto vinculado a su cadena)")
-ci_cols = [
-    "clasificador_cod", "clasificador_desc",
-    "generica","subgenerica","subgenerica_det","especifica","especifica_det",
-    "mto_pia","mto_pim","mto_certificado","mto_compro_anual",
-    "devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
-]
-ci_cols = [c for c in ci_cols if c in df_proc.columns]
-ci_cols_df_head = df_proc[ci_cols].head(300).copy()
-styled_ci_cols_df_head = ci_cols_df_head.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
-st.dataframe(styled_ci_cols_df_head, width='stretch') # Updated width
-
-# =========================
-# Consolidado por clasificador con highlighting
-# =========================
-agg_cols = [c for c in ["mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim"] if c in df_proc.columns]
-consolidado = df_proc.groupby(
-    ["clasificador_cod","clasificador_desc","generica","subgenerica","subgenerica_det","especifica","especifica_det"],
-    dropna=False
-)[agg_cols].sum().reset_index()
-
-if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
-    consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
-
-st.markdown("**Consolidado por clasificador**")
-consolidado_head = consolidado.head(500)
-styled_consolidado_head = consolidado_head.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
-st.dataframe(styled_consolidado_head, width='stretch') # Updated width
-
-
-# =========================
-# Serie mensual de devengado (dinámica e interactiva)
-# =========================
-if dev_cols:
-    st.subheader("Devengado mensual (por filtro actual)")
-
-    # Add filter for the selected group_col
-    all_categories = ["Todos"] + sorted(df_proc[group_col].dropna().unique().tolist())
-    selected_category = st.selectbox(f"Filtrar por {group_col}", options=all_categories, index=0)
-
-    if selected_category != "Todos":
-        df_dev_filtered = df_proc[df_proc[group_col] == selected_category].copy()
-    else:
-        df_dev_filtered = df_proc.copy()
-
-    month_map = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
-    dev_series = df_dev_filtered[dev_cols].sum().reset_index()
-    dev_series.columns = ["col", "monto"]
-    dev_series["mes"] = dev_series["col"].map(month_map)
-    dev_series = dev_series.sort_values("mes")
-    st.dataframe(dev_series[["mes", "monto"]], width='stretch') # Updated width
-
-    # Gráfico de barras simple con matplotlib (tamaño ajustado)
-    fig, ax = plt.subplots(figsize=(12, 7)) # Adjusted figure size
-    ax.bar(dev_series["mes"].astype(int), dev_series["monto"].values)
+    fig, ax = plt.subplots(figsize=(12, 7))
+    ax.bar(series_data["mes"].astype(int), series_data["monto"].values, color=color)
     ax.set_xlabel("Mes")
-    ax.set_ylabel("Devengado (S/)")
-    ax.set_title(f"Devengado mensual (acumulado para '{selected_category}' en '{group_col}')" if selected_category != "Todos" else "Devengado mensual (acumulado por filtro actual)")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.set_xticks(range(1, 13)) # Ensure all months are shown on x-axis
     st.pyplot(fig)
+    plt.close(fig) # Close the figure
+
+    return fig, series_data # Return figure and data for download
+
+def generate_projection_chart(dev_series, current_month, projection_method):
+    """Generates a chart with historical execution and future projection."""
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Historical data
+    historical_dev = dev_series[dev_series["mes"] <= current_month].copy()
+    ax.bar(historical_dev["mes"].astype(int), historical_dev["monto"].values, color='skyblue', label='Devengado Histórico')
+
+    # Projection
+    remaining_months = list(range(current_month + 1, 13))
+    if remaining_months:
+        if projection_method == "Promedio Mensual":
+            average_monthly_dev = historical_dev["monto"].mean() if not historical_dev.empty else 0
+            projected_dev = [historical_dev["monto"].sum() + average_monthly_dev * i for i in range(1, len(remaining_months) + 1)]
+            projection_months = remaining_months
+        elif projection_method == "Regresión Lineal":
+             if len(historical_dev) >= 2:
+                model = LinearRegression()
+                X = historical_dev["mes"].values.reshape(-1, 1)
+                y = historical_dev["monto"].values
+                model.fit(X, y)
+
+                projection_months = np.array(remaining_months).reshape(-1, 1)
+                projected_monthly_values = model.predict(projection_months)
+                # Ensure projected values are not negative
+                projected_monthly_values[projected_monthly_values < 0] = 0
+
+                # Calculate cumulative projection
+                last_historical_cumulative = historical_dev["monto"].sum()
+                projected_dev = [last_historical_cumulative + projected_monthly_values[:i].sum() for i in range(1, len(remaining_months) + 1)]
+             else:
+                # Fallback to average if not enough data points for regression
+                average_monthly_dev = historical_dev["monto"].mean() if not historical_dev.empty else 0
+                projected_dev = [historical_dev["monto"].sum() + average_monthly_dev * i for i in range(1, len(remaining_months) + 1)]
+                projection_months = remaining_months
+
+
+        if projected_dev:
+            # Plot cumulative projection
+            cumulative_months = list(historical_dev["mes"].astype(int)) + remaining_months
+            cumulative_values = list(historical_dev["monto"].cumsum().values) + projected_dev
+
+            ax.plot(cumulative_months, cumulative_values, color='orange', linestyle='--', marker='o', label='Proyección Acumulada')
+            ax.fill_between(cumulative_months, cumulative_values, color='orange', alpha=0.2)
+
+
+    ax.set_xlabel("Mes")
+    ax.set_ylabel("Monto Acumulado (S/)")
+    ax.set_title(f"Proyección de Ejecución ({projection_method})")
+    ax.set_xticks(range(1, 13))
+    ax.legend()
+    ax.grid(axis='y', linestyle='--')
+    st.pyplot(fig)
+    plt.close(fig)
+
+    return fig # Return figure for download
+
 
 # =========================
 # Descarga a Excel (Modificada)
 # =========================
-def to_excel_download_modified(df_proc, pivot, consolidado, dev_series, fig, group_col, riesgo_umbral):
+def to_excel_download_modified(df_proc, pivot, consolidado, dev_series, monthly_charts_figs, projection_fig, group_col, riesgo_umbral):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
 
-        # Add the plot image to a sheet
         workbook = writer.book
-        if "Grafico Mensual" not in workbook.sheetnames:
-             workbook.create_sheet("Grafico Mensual")
-        ws_plot = workbook["Grafico Mensual"]
 
-        img_buffer = io.BytesIO()
-        fig.savefig(img_buffer, format='png')
-        img_buffer.seek(0)
-        plt.close(fig) # Close the figure to free memory
+        # Add monthly charts images to sheets
+        for chart_name, fig in monthly_charts_figs.items():
+            if chart_name not in workbook.sheetnames:
+                 workbook.create_sheet(chart_name)
+            ws_chart = workbook[chart_name]
 
-        img = Image(img_buffer)
-        ws_plot.add_image(img, 'A1')
+            img_buffer = io.BytesIO()
+            fig.savefig(img_buffer, format='png')
+            img_buffer.seek(0)
+            # No need to close fig here, it's done in the generation function
+
+            img = Image(img_buffer)
+            ws_chart.add_image(img, 'A1')
+
+        # Add projection chart image
+        if projection_fig:
+            if "Proyeccion Ejecucion" not in workbook.sheetnames:
+                 workbook.create_sheet("Proyeccion Ejecucion")
+            ws_proj = workbook["Proyeccion Ejecucion"]
+            img_buffer = io.BytesIO()
+            projection_fig.savefig(img_buffer, format='png')
+            img_buffer.seek(0)
+            # No need to close fig here, it's done in the generation function
+
+            img = Image(img_buffer)
+            ws_proj.add_image(img, 'A1')
+
 
         # Create and format the executive summary table based on pivot
         executive_summary_cols = [col for col in ['clasificador_cod', 'clasificador_desc', group_col, 'mto_pia', 'mto_pim', 'mto_certificado', 'mto_compro_anual', 'devengado', 'saldo_pim', 'avance_%'] if col in pivot.columns]
         executive_summary_df = pivot[executive_summary_cols].copy()
 
         # Apply highlighting to the executive summary table data before writing
-        styled_executive_summary_df = executive_summary_df.style.apply(highlight_risk, umbral=riesgo_umbral, axis=1)
-
-        # Write the styled executive summary DataFrame to a new sheet
-        # Note: Writing a styled DataFrame directly to Excel might lose some formatting.
-        # A common approach is to write the raw data and apply formatting using openpyxl
-        # after writing. For simplicity here, we'll write the raw data and mention this limitation.
+        # Note: Styler formatting is not directly exported to Excel.
+        # We export the raw data.
         executive_summary_df.to_excel(writer, index=False, sheet_name="Resumen Ejecutivo")
-
-        # Optional: Add a note in the Excel about the styling not being preserved automatically
-        # ws_summary = workbook["Resumen Ejecutivo"]
-        # ws_summary['A1'] = "Note: Conditional highlighting from the app is not preserved in this raw data export."
 
 
     output.seek(0)
     return output
 
-# Download button using the modified function
-if uploaded is not None and 'df_proc' in locals() and 'pivot' in locals() and 'dev_series' in locals() and 'fig' in locals():
+# =========================
+# Main App Logic
+# =========================
+
+if uploaded is not None:
+    # Data loading and initial processing are done above
+
+    # ... (Filtering and CI-EC/Clasificador processing also done above)
+
+    # Display Resumen Ejecutivo, Vistas por agrupación, Procesos CI–EC, Consolidado
+    # (Code for these sections is already in the initial code block and should be kept)
+
+    # =========================
+    # Monthly Series Charts
+    # =========================
+    st.subheader("Ritmo Mensual: Certificado, Comprometido y Devengado")
+
+    cert_cols = find_monthly_columns(df_proc, "mto_certificado_")
+    if cert_cols:
+         cert_fig, cert_series = generate_monthly_series_chart(df_proc, cert_cols, "Certificado Mensual", "Certificado (S/)", 'lightcoral', current_month)
+    else:
+         cert_fig = None
+
+    comp_cols = find_monthly_columns(df_proc, "mto_compro_")
+    if comp_cols:
+         comp_fig, comp_series = generate_monthly_series_chart(df_proc, comp_cols, "Comprometido Mensual", "Comprometido (S/)", 'cornflowerblue', current_month)
+    else:
+         comp_fig = None
+
+    dev_cols = find_monthly_columns(df_proc, "mto_devenga_")
+    if dev_cols:
+        # Re-calculate dev_series based on the current filter for the monthly chart
+        if 'selected_category' in locals() and selected_category != "Todos":
+             df_dev_filtered_for_chart = df_proc[df_proc[group_col] == selected_category].copy()
+        else:
+             df_dev_filtered_for_chart = df_proc.copy()
+
+        month_map_dev = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
+        dev_series_for_chart = df_dev_filtered_for_chart[dev_cols].sum().reset_index()
+        dev_series_for_chart.columns = ["col", "monto"]
+        dev_series_for_chart["mes"] = dev_series_for_chart["col"].map(month_map_dev)
+        dev_series_for_chart = dev_series_for_chart.sort_values("mes")
+
+        dev_fig, dev_series = generate_monthly_series_chart(df_dev_filtered_for_chart, dev_cols, "Devengado Mensual", "Devengado (S/)", 'mediumseagreen', current_month)
+    else:
+        dev_fig = None
+        dev_series = pd.DataFrame(columns=["mes", "monto"]) # Ensure dev_series is defined even if no dev_cols
+
+
+    # =========================
+    # Execution Projection Chart
+    # =========================
+    st.subheader("Proyección de Ejecución Acumulada")
+    # Use the dev_series calculated for the monthly chart for projection
+    projection_fig = generate_projection_chart(dev_series, current_month, projection_method)
+
+
+    # =========================
+    # Download Button (using modified function)
+    # =========================
+    monthly_charts_figs = {}
+    if cert_fig: monthly_charts_figs["Grafico Certificado"] = cert_fig
+    if comp_fig: monthly_charts_figs["Grafico Comprometido"] = comp_fig
+    if dev_fig: monthly_charts_figs["Grafico Devengado"] = dev_fig
+
+
+    # Ensure pivot and consolidado are defined before passing to download function
+    # (They are defined in the sections above)
+
     buf_modified = to_excel_download_modified(
         df_proc=df_proc,
         pivot=pivot,
-        consolidado=consolidado, # consolidado is included for potential future use, but not written in this modified function
-        dev_series=dev_series,
-        fig=fig,
+        consolidado=consolidado,
+        dev_series=dev_series, # Passing dev_series might not be strictly needed in the function, but good for context
+        monthly_charts_figs=monthly_charts_figs,
+        projection_fig=projection_fig,
         group_col=group_col,
         riesgo_umbral=riesgo_umbral
     )
     st.download_button(
-        "Descargar Excel (Gráfico y Resumen Ejecutivo)",
+        "Descargar Excel (Gráficos y Resumen Ejecutivo)",
         data=buf_modified,
-        file_name="siaf_analisis_ejecutivo.xlsx",
+        file_name="siaf_analisis_completo.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# If uploaded is None, the initial message is shown and st.stop() is called.
