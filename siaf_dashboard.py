@@ -243,7 +243,7 @@ def pivot_exec(df, group_col, dev_cols):
 
     return g
 
-def to_excel_download(resumen, avance):
+def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
     wb = Workbook()
     ws_res = wb.active
     ws_res.title = "Resumen"
@@ -267,6 +267,38 @@ def to_excel_download(resumen, avance):
     chart.height = 7
     chart.width = 15
     ws_av.add_chart(chart, "E2")
+
+    if proyeccion is not None and not proyeccion.empty:
+        ws_proj = wb.create_sheet("Proyeccion")
+        for r in dataframe_to_rows(proyeccion, index=False, header=True):
+            ws_proj.append(r)
+        chart2 = BarChart()
+        data2 = Reference(ws_proj, min_col=2, min_row=1, max_row=ws_proj.max_row, max_col=ws_proj.max_column)
+        cats2 = Reference(ws_proj, min_col=1, min_row=2, max_row=ws_proj.max_row)
+        chart2.add_data(data2, titles_from_data=True)
+        chart2.set_categories(cats2)
+        chart2.title = "Proyeccion devengado"
+        chart2.y_axis.title = "Monto"
+        chart2.x_axis.title = "Mes"
+        chart2.height = 7
+        chart2.width = 15
+        ws_proj.add_chart(chart2, "E2")
+
+    if ritmo is not None and not ritmo.empty:
+        ws_rit = wb.create_sheet("Ritmo")
+        for r in dataframe_to_rows(ritmo, index=False, header=True):
+            ws_rit.append(r)
+        chart3 = BarChart()
+        data3 = Reference(ws_rit, min_col=2, min_row=1, max_row=ws_rit.max_row, max_col=ws_rit.max_column)
+        cats3 = Reference(ws_rit, min_col=1, min_row=2, max_row=ws_rit.max_row)
+        chart3.add_data(data3, titles_from_data=True)
+        chart3.set_categories(cats3)
+        chart3.title = "Ritmo actual vs necesario"
+        chart3.y_axis.title = "Monto"
+        chart3.x_axis.title = "Proceso"
+        chart3.height = 7
+        chart3.width = 15
+        ws_rit.add_chart(chart3, "E2")
 
     output = io.BytesIO()
     wb.save(output)
@@ -386,7 +418,19 @@ st.dataframe(df_ci, use_container_width=True)
 # =========================
 # Consolidado por clasificador
 # =========================
-agg_cols = [c for c in ["mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim"] if c in df_proc.columns]
+agg_cols = [
+    c
+    for c in [
+        "mto_pia",
+        "mto_pim",
+        "mto_certificado",
+        "mto_compro_anual",
+        "devengado_mes",
+        "devengado",
+        "saldo_pim",
+    ]
+    if c in df_proc.columns
+]
 consolidado = df_proc.groupby(
     ["clasificador_cod","clasificador_desc","generica","subgenerica","subgenerica_det","especifica","especifica_det"],
     dropna=False
@@ -408,6 +452,7 @@ st.dataframe(consol_display, use_container_width=True)
 # Serie mensual interactiva
 # =========================
 avance_series = pd.DataFrame()
+proyeccion_wide = pd.DataFrame()
 if dev_cols and "mto_pim" in df_proc.columns:
     st.subheader("Avance mensual interactivo")
     month_map = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
@@ -429,7 +474,7 @@ if dev_cols and "mto_pim" in df_proc.columns:
             color=alt.condition(alt.datum.riesgo, alt.value("#ff6961"), alt.value("#1f77b4")),
             tooltip=["mes", alt.Tooltip("avance_pct", format=".2f")],
         )
-        .properties(width=700, height=300)
+        .properties(width=650, height=300)
     )
     st.altair_chart(chart, use_container_width=False)
     st.dataframe(
@@ -440,10 +485,59 @@ if dev_cols and "mto_pim" in df_proc.columns:
         use_container_width=True,
     )
 
+    if current_month < 12:
+        st.subheader("Proyección de ejecución")
+        avg_month = dev_series.loc[dev_series["mes"] <= current_month, "monto"].mean()
+        proj_months = list(range(current_month + 1, 13))
+        proj_df = pd.DataFrame({"mes": proj_months, "monto": [avg_month] * len(proj_months), "tipo": "Proyectado"})
+        real_df = dev_series[["mes", "monto"]].copy()
+        real_df["tipo"] = "Real"
+        dev_proj = pd.concat([real_df, proj_df], ignore_index=True)
+        chart_proj = (
+            alt.Chart(dev_proj)
+            .mark_bar()
+            .encode(
+                x=alt.X("mes:O", title="Mes"),
+                y=alt.Y("monto:Q", title="Devengado"),
+                color="tipo:N",
+                tooltip=["mes", alt.Tooltip("monto", format=",")],
+            )
+            .properties(width=650, height=300)
+        )
+        st.altair_chart(chart_proj, use_container_width=False)
+        proyeccion_wide = dev_proj.pivot_table(index="mes", columns="tipo", values="monto", fill_value=0).reset_index()
+
+ritmo_df = pd.DataFrame()
+if "mto_pim" in df_proc.columns:
+    st.subheader("Ritmo requerido por proceso")
+    remaining_months = max(12 - current_month, 1)
+    pim_total = df_proc["mto_pim"].sum()
+    processes = []
+    for col, label in [("mto_certificado", "Certificar"), ("mto_compro_anual", "Comprometer"), ("devengado", "Devengar")]:
+        total = df_proc.get(col, pd.Series(dtype=float)).sum()
+        actual_avg = total / current_month
+        needed = max(pim_total - total, 0)
+        required_avg = needed / remaining_months
+        processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
+    ritmo_df = pd.DataFrame(processes)
+    ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
+    chart_ritmo = (
+        alt.Chart(ritmo_melt)
+        .mark_bar()
+        .encode(
+            x=alt.X("Proceso:N"),
+            y=alt.Y("Monto:Q"),
+            color="Tipo:N",
+            tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",")],
+        )
+        .properties(width=650, height=300)
+    )
+    st.altair_chart(chart_ritmo, use_container_width=False)
+
 # =========================
 # Descarga a Excel
 # =========================
-buf = to_excel_download(resumen=pivot, avance=avance_series)
+buf = to_excel_download(resumen=pivot, avance=avance_series, proyeccion=proyeccion_wide, ritmo=ritmo_df)
 st.download_button(
     "Descargar Excel (Resumen + Avance)",
     data=buf,
