@@ -1,5 +1,3 @@
-!pip install scikit-learn
-
 import re
 import io
 import numpy as np
@@ -501,6 +499,3 @@ if uploaded is not None:
 
     else:
         st.warning("Please upload and process the data first.")
-
-
-# If uploaded is None, the initial message is shown and st.stop() is called.
