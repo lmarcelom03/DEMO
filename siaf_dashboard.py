@@ -36,6 +36,7 @@ with st.sidebar:
     st.header("Reglas CI–EC")
     current_month = st.number_input("Mes actual (1-12)", min_value=1, max_value=12, value=9)
     riesgo_umbral = st.number_input("Umbral de avance mínimo (%)", min_value=0, max_value=100, value=60)
+    meta_avance = st.number_input("Meta de avance al cierre (%)", min_value=0, max_value=100, value=95)
     st.caption("Se marca riesgo_devolucion si Avance% < Umbral.")
 
 # =========================
@@ -485,11 +486,15 @@ if dev_cols and "mto_pim" in df_proc.columns:
         use_container_width=True,
     )
 
-    if current_month < 12:
+    if current_month < 12 and pim_total > 0:
         st.subheader("Proyección de ejecución")
-        avg_month = dev_series.loc[dev_series["mes"] <= current_month, "monto"].mean()
+        target_total = pim_total * float(meta_avance) / 100.0
+        dev_acum = dev_series.loc[dev_series["mes"] <= current_month, "monto"].sum()
+        remaining_needed = max(target_total - dev_acum, 0)
+        remaining_months = 12 - current_month
         proj_months = list(range(current_month + 1, 13))
-        proj_df = pd.DataFrame({"mes": proj_months, "monto": [avg_month] * len(proj_months), "tipo": "Proyectado"})
+        proj_per_month = remaining_needed / remaining_months if remaining_months > 0 else 0
+        proj_df = pd.DataFrame({"mes": proj_months, "monto": [proj_per_month] * len(proj_months), "tipo": "Necesario"})
         real_df = dev_series[["mes", "monto"]].copy()
         real_df["tipo"] = "Real"
         dev_proj = pd.concat([real_df, proj_df], ignore_index=True)
@@ -502,7 +507,7 @@ if dev_cols and "mto_pim" in df_proc.columns:
                 color="tipo:N",
                 tooltip=["mes", alt.Tooltip("monto", format=",")],
             )
-            .properties(width=650, height=300)
+            .properties(width=650, height=250)
         )
         st.altair_chart(chart_proj, use_container_width=False)
         proyeccion_wide = dev_proj.pivot_table(index="mes", columns="tipo", values="monto", fill_value=0).reset_index()
