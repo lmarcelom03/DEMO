@@ -41,37 +41,10 @@ with st.sidebar:
     meta_avance = st.number_input("Meta de avance al cierre (%)", min_value=0, max_value=100, value=95)
     st.caption("Se marca riesgo_devolucion si Avance% < Umbral.")
 
-# Mapeo de códigos de sec_func a nombres
-SEC_FUNC_MAP = {
-    1: "PI_2",
-    2: "DCEME",
-    3: "DE",
-    4: "PI_1",
-    5: "OPP",
-    6: "JEF",
-    7: "GG",
-    8: "OAUGD",
-    9: "OTI",
-    10: "OA",
-    11: "OC",
-    12: "OAJ",
-    13: "RRHH",
-    14: "OCI",
-    15: "DCEME15",
-    16: "DETN16",
-    21: "DETN21",
-    22: "DETN22",
-}
-SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
-
 # =========================
 # Utilitarios de carga
 # =========================
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
-    """
-    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'mto_', 'pim', etc.).
-    Retorna (sheet_name, header_row_index_pandas).
-    """
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
     for s in candidate_sheets:
         try:
@@ -83,7 +56,6 @@ def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_gu
             hits = sum(int(any(k in v for k in ["ano_eje", "pim", "pia", "mto_", "devenga", "girado"])) for v in row_vals)
             if hits >= 2:
                 return s, r
-    # Fallback: primera hoja y fila indicada por el usuario - 1 (a índice 0)
     return xls.sheet_names[0], header_guess - 1
 
 def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=True):
@@ -107,15 +79,6 @@ def find_monthly_columns(df, prefix):
     return [f"{prefix}{i:02d}" for i in range(1, 13) if f"{prefix}{i:02d}" in df.columns]
 
 def ensure_ci_ec_steps(df, month, umbral):
-    """
-    Crea/asegura columnas claves si no existen:
-    - devengado (suma mto_devenga_01..12)
-    - devengado_mes (columna del mes seleccionado)
-    - saldo_pim (pim - devengado)
-    - avance_% (devengado/pim)
-    - riesgo_devolucion (avance_% < umbral)
-    - area (vacía si no existe)
-    """
     df = df.copy()
     dev_cols = find_monthly_columns(df, "mto_devenga_")
 
@@ -146,7 +109,6 @@ def ensure_ci_ec_steps(df, month, umbral):
 _code_re = re.compile(r"^\s*(\d+(?:\.\d+)*)")
 
 def extract_code(text):
-    """Extrae el prefijo numérico (con puntos) de un texto tipo '2.1.1 Bienes y servicios'."""
     if pd.isna(text):
         return ""
     s = str(text).strip()
@@ -157,21 +119,15 @@ def last_segment(code):
     return code.split(".")[-1] if code else ""
 
 def concat_hierarchy(gen, sub, subdet, esp, espdet):
-    """
-    Concatena jerárquicamente evitando duplicados:
-    generica.subgenerica.subgenerica_det.especifica.especifica_det
-    """
     parts = []
     if gen:
         parts.append(gen)
     for child in [sub, subdet, esp, espdet]:
         if not child:
             continue
-        # Si el hijo ya trae el prefijo, lo conservamos
         if parts and (child.startswith(parts[-1] + ".") or child.startswith(parts[0] + ".")):
             parts.append(child)
         else:
-            # Caso contrario, agregamos solo el último segmento al prefijo anterior
             if parts:
                 parts.append(parts[-1] + "." + last_segment(child))
             else:
@@ -179,30 +135,17 @@ def concat_hierarchy(gen, sub, subdet, esp, espdet):
     return parts[-1] if parts else ""
 
 def normalize_clasificador(code):
-    """
-    Regla: todo clasificador debe comenzar con '2.'.
-    - Si está vacío => '2.'
-    - Si no inicia con '2.' => anteponer '2.'
-    """
     if not code:
         return "2."
-    return code if it.startswith("2.") else "2." + code
+    return code if code.startswith("2.") else "2." + code
 
 def desc_only(text):
-    """Devuelve solo la descripción (lo que va después del primer punto)."""
     if pd.isna(text):
         return ""
     s = str(text)
     return s.split(".", 1)[1].strip() if "." in s else s
 
 def build_classifier_columns(df):
-    """
-    Crea columnas:
-    - gen_cod, sub_cod, subdet_cod, esp_cod, espdet_cod (códigos numéricos)
-    - clasificador_cod (concatenado y normalizado con 2.)
-    - generica_desc, subgenerica_desc, subgenerica_det_desc, especifica_desc, especifica_det_desc
-    - clasificador_desc (descripción jerárquica)
-    """
     df = df.copy()
     gen = df.get("generica", "")
     sub = df.get("subgenerica", "")
@@ -223,7 +166,6 @@ def build_classifier_columns(df):
         )
     ]
 
-    # Descripciones sin código
     df["generica_desc"] = gen.map(desc_only) if "generica" in df.columns else ""
     df["subgenerica_desc"] = sub.map(desc_only) if "subgenerica" in df.columns else ""
     df["subgenerica_det_desc"] = subdet.map(desc_only) if "subgenerica_det" in df.columns else ""
@@ -256,7 +198,6 @@ def pivot_exec(df, group_col, dev_cols):
     if dev_cols:
         cols.append("devengado")
 
-    # Si no existía 'devengado' pero hay columnas mensuales, lo armamos en copia
     if "devengado" not in df.columns and dev_cols:
         df = df.copy()
         df["devengado"] = df[dev_cols].sum(axis=1)
@@ -316,7 +257,7 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         cats2 = Reference(ws_proj, min_col=1, min_row=2, max_row=ws_proj.max_row)
         chart2.add_data(data2, titles_from_data=True)
         chart2.set_categories(cats2)
-        chart2.title = "Proyeccion devengado"
+        chart2.title = "Proyección devengado"
         chart2.y_axis.title = "Monto"
         chart2.x_axis.title = "Mes"
         chart2.height = 7
@@ -357,7 +298,8 @@ if uploaded is None:
     st.stop()
 
 try:
-    df, used_sheet = load_data(uploaded, usecols, sheet_name.strip() or None, int(header_row_excel), autodetect=detect_header)
+    df, used_sheet = load_data(uploaded, usecols, sheet_name.strip() or None,
+                               int(header_row_excel), autodetect=detect_header)
 except Exception as e:
     st.error(f"No se pudo leer el archivo: {e}")
     st.stop()
@@ -513,7 +455,7 @@ if dev_cols and "mto_pim" in df_proc.columns:
         .mark_bar()
         .encode(
             x=alt.X("mes:O", title="Mes"),
-            y=alt.Y("contrib_pct:Q", title="% contribución"),
+            y=alt.Y("contrib_pct:Q", title="% contrib."),
             color=alt.condition(alt.datum.riesgo, alt.value("#ff6961"), alt.value("#1f77b4")),
             tooltip=[
                 "mes",
@@ -521,7 +463,7 @@ if dev_cols and "mto_pim" in df_proc.columns:
                 alt.Tooltip("contrib_pct", title="Contrib. %", format=".2f"),
             ],
         )
-        .properties(width=600, height=250)
+        .properties(width=600, height=220)
     )
     st.altair_chart(chart, use_container_width=False)
     st.dataframe(
@@ -553,7 +495,7 @@ if dev_cols and "mto_pim" in df_proc.columns:
                 color="tipo:N",
                 tooltip=["mes", alt.Tooltip("monto", format=",")],
             )
-            .properties(width=600, height=250)
+            .properties(width=600, height=220)
         )
         st.altair_chart(chart_proj, use_container_width=False)
         proyeccion_wide = dev_proj.pivot_table(index="mes", columns="tipo", values="monto", fill_value=0).reset_index()
@@ -581,14 +523,15 @@ if "mto_pim" in df_proc.columns:
             color="Tipo:N",
             tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",")],
         )
-        .properties(width=600, height=300)
+        .properties(width=600, height=250)
     )
     st.altair_chart(chart_ritmo, use_container_width=False)
 
 # =========================
 # Descarga a Excel
 # =========================
-buf = to_excel_download(resumen=pivot, avance=avance_series, proyeccion=proyeccion_wide, ritmo=ritmo_df)
+buf = to_excel_download(resumen=pivot, avance=avance_series,
+                        proyeccion=proyeccion_wide, ritmo=ritmo_df)
 st.download_button(
     "Descargar Excel (Resumen + Avance)",
     data=buf,
