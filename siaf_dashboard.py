@@ -5,11 +5,11 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 # =========================
 # Configuración de la app
@@ -69,7 +69,7 @@ SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
 # =========================
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
     """
-    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', etc.).
+    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'mto_', 'pim', etc.).
     Retorna (sheet_name, header_row_index_pandas).
     """
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
@@ -83,7 +83,8 @@ def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_gu
             hits = sum(int(any(k in v for k in ["ano_eje", "pim", "pia", "mto_", "devenga", "girado"])) for v in row_vals)
             if hits >= 2:
                 return s, r
-    return xls.sheet_names[0], header_guess - 1  # fallback
+    # Fallback: primera hoja y fila indicada por el usuario - 1 (a índice 0)
+    return xls.sheet_names[0], header_guess - 1
 
 def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=True):
     xls = pd.ExcelFile(excel_bytes)
@@ -94,6 +95,7 @@ def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=Tru
         hdr = header_row_excel - 1
         s = sheet_name if sheet_name else xls.sheet_names[0]
         df = pd.read_excel(excel_bytes, sheet_name=s, header=hdr, usecols=usecols)
+
     df = df.dropna(how="all").dropna(axis=1, how="all")
     df.columns = [str(c).strip().lower() for c in df.columns]
     return df, s
@@ -106,8 +108,13 @@ def find_monthly_columns(df, prefix):
 
 def ensure_ci_ec_steps(df, month, umbral):
     """
-    Asegura columnas claves:
-      devengado, devengado_mes, saldo_pim, avance_%, riesgo_devolucion, area.
+    Crea/asegura columnas claves si no existen:
+    - devengado (suma mto_devenga_01..12)
+    - devengado_mes (columna del mes seleccionado)
+    - saldo_pim (pim - devengado)
+    - avance_% (devengado/pim)
+    - riesgo_devolucion (avance_% < umbral)
+    - area (vacía si no existe)
     """
     df = df.copy()
     dev_cols = find_monthly_columns(df, "mto_devenga_")
@@ -139,6 +146,7 @@ def ensure_ci_ec_steps(df, month, umbral):
 _code_re = re.compile(r"^\s*(\d+(?:\.\d+)*)")
 
 def extract_code(text):
+    """Extrae el prefijo numérico (con puntos) de un texto tipo '2.1.1 Bienes y servicios'."""
     if pd.isna(text):
         return ""
     s = str(text).strip()
@@ -149,15 +157,21 @@ def last_segment(code):
     return code.split(".")[-1] if code else ""
 
 def concat_hierarchy(gen, sub, subdet, esp, espdet):
+    """
+    Concatena jerárquicamente evitando duplicados:
+    generica.subgenerica.subgenerica_det.especifica.especifica_det
+    """
     parts = []
     if gen:
         parts.append(gen)
     for child in [sub, subdet, esp, espdet]:
         if not child:
             continue
+        # Si el hijo ya trae el prefijo, lo conservamos
         if parts and (child.startswith(parts[-1] + ".") or child.startswith(parts[0] + ".")):
             parts.append(child)
         else:
+            # Caso contrario, agregamos solo el último segmento al prefijo anterior
             if parts:
                 parts.append(parts[-1] + "." + last_segment(child))
             else:
@@ -165,17 +179,30 @@ def concat_hierarchy(gen, sub, subdet, esp, espdet):
     return parts[-1] if parts else ""
 
 def normalize_clasificador(code):
+    """
+    Regla: todo clasificador debe comenzar con '2.'.
+    - Si está vacío => '2.'
+    - Si no inicia con '2.' => anteponer '2.'
+    """
     if not code:
         return "2."
     return code if code.startswith("2.") else "2." + code
 
 def desc_only(text):
+    """Devuelve solo la descripción (lo que va después del primer punto)."""
     if pd.isna(text):
         return ""
     s = str(text)
     return s.split(".", 1)[1].strip() if "." in s else s
 
 def build_classifier_columns(df):
+    """
+    Crea columnas:
+    - gen_cod, sub_cod, subdet_cod, esp_cod, espdet_cod (códigos numéricos)
+    - clasificador_cod (concatenado y normalizado con 2.)
+    - generica_desc, subgenerica_desc, subgenerica_det_desc, especifica_desc, especifica_det_desc
+    - clasificador_desc (descripción jerárquica)
+    """
     df = df.copy()
     gen = df.get("generica", "")
     sub = df.get("subgenerica", "")
@@ -196,6 +223,7 @@ def build_classifier_columns(df):
         )
     ]
 
+    # Descripciones sin código
     df["generica_desc"] = gen.map(desc_only) if "generica" in df.columns else ""
     df["subgenerica_desc"] = sub.map(desc_only) if "subgenerica" in df.columns else ""
     df["subgenerica_det_desc"] = subdet.map(desc_only) if "subgenerica_det" in df.columns else ""
@@ -217,12 +245,18 @@ def build_classifier_columns(df):
 # =========================
 def pivot_exec(df, group_col, dev_cols):
     cols = []
-    for c in ["mto_pia", "mto_pim", "mto_certificado", "mto_compro_anual"]:
-        if c in df.columns:
-            cols.append(c)
+    if "mto_pia" in df.columns:
+        cols.append("mto_pia")
+    if "mto_pim" in df.columns:
+        cols.append("mto_pim")
+    if "mto_certificado" in df.columns:
+        cols.append("mto_certificado")
+    if "mto_compro_anual" in df.columns:
+        cols.append("mto_compro_anual")
     if dev_cols:
         cols.append("devengado")
 
+    # Si no existía 'devengado' pero hay columnas mensuales, lo armamos en copia
     if "devengado" not in df.columns and dev_cols:
         df = df.copy()
         df["devengado"] = df[dev_cols].sum(axis=1)
@@ -237,34 +271,74 @@ def pivot_exec(df, group_col, dev_cols):
 
 def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
     wb = Workbook()
-    wb.remove(wb.active)  # controlar orden
+    ws_res = wb.active
+    ws_res.title = "Resumen"
+    for r in dataframe_to_rows(resumen, index=False, header=True):
+        ws_res.append(r)
+    for cell in ws_res[1]:
+        cell.font = Font(bold=True)
+    tab_res = Table(displayName="ResumenTable", ref=f"A1:{get_column_letter(ws_res.max_column)}{ws_res.max_row}")
+    tab_res.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws_res.add_table(tab_res)
 
-    def add_table_with_chart(df, sheet_name):
-        ws = wb.create_sheet(sheet_name)
-        for r in dataframe_to_rows(df, index=False, header=True):
-            ws.append(r)
-        ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
-        tbl = Table(displayName=f"Tbl{sheet_name[:20].replace(' ','_')}", ref=ref)
-        tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
-        ws.add_table(tbl)
-        num_cols = [i + 2 for i, c in enumerate(df.columns[1:]) if pd.api.types.is_numeric_dtype(df[c])]
-        if num_cols:
-            chart = BarChart()
-            data = Reference(ws, min_col=2, min_row=1, max_row=ws.max_row, max_col=max(num_cols))
-            cats = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
-            chart.add_data(data, titles_from_data=True)
-            chart.set_categories(cats)
-            chart.title = sheet_name
-            chart.height = 7
-            chart.width = 15
-            ws.add_chart(chart, f"{get_column_letter(ws.max_column + 2)}2")
+    ws_av = wb.create_sheet("Avance")
+    for r in dataframe_to_rows(avance, index=False, header=True):
+        ws_av.append(r)
+    tab_av = Table(displayName="AvanceTable", ref=f"A1:{get_column_letter(ws_av.max_column)}{ws_av.max_row}")
+    tab_av.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws_av.add_table(tab_av)
 
-    add_table_with_chart(resumen, "Resumen")
-    add_table_with_chart(avance, "Avance")
+    chart = BarChart()
+    data = Reference(ws_av, min_col=3, min_row=1, max_row=ws_av.max_row, max_col=3)
+    cats = Reference(ws_av, min_col=1, min_row=2, max_row=ws_av.max_row)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+    chart.title = "Contribución mensual (%)"
+    chart.y_axis.title = "%"
+    chart.x_axis.title = "Mes"
+    chart.height = 7
+    chart.width = 15
+    ws_av.add_chart(chart, "E2")
+
     if proyeccion is not None and not proyeccion.empty:
-        add_table_with_chart(proyeccion, "Proyeccion")
+        ws_proj = wb.create_sheet("Proyeccion")
+        for r in dataframe_to_rows(proyeccion, index=False, header=True):
+            ws_proj.append(r)
+        tab_proj = Table(displayName="ProyeccionTable", ref=f"A1:{get_column_letter(ws_proj.max_column)}{ws_proj.max_row}")
+        tab_proj.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+        ws_proj.add_table(tab_proj)
+
+        chart2 = BarChart()
+        data2 = Reference(ws_proj, min_col=2, min_row=1, max_row=ws_proj.max_row, max_col=ws_proj.max_column)
+        cats2 = Reference(ws_proj, min_col=1, min_row=2, max_row=ws_proj.max_row)
+        chart2.add_data(data2, titles_from_data=True)
+        chart2.set_categories(cats2)
+        chart2.title = "Proyeccion devengado"
+        chart2.y_axis.title = "Monto"
+        chart2.x_axis.title = "Mes"
+        chart2.height = 7
+        chart2.width = 15
+        ws_proj.add_chart(chart2, "E2")
+
     if ritmo is not None and not ritmo.empty:
-        add_table_with_chart(ritmo, "Ritmo")
+        ws_rit = wb.create_sheet("Ritmo")
+        for r in dataframe_to_rows(ritmo, index=False, header=True):
+            ws_rit.append(r)
+        tab_rit = Table(displayName="RitmoTable", ref=f"A1:{get_column_letter(ws_rit.max_column)}{ws_rit.max_row}")
+        tab_rit.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+        ws_rit.add_table(tab_rit)
+
+        chart3 = BarChart()
+        data3 = Reference(ws_rit, min_col=2, min_row=1, max_row=ws_rit.max_row, max_col=ws_rit.max_column)
+        cats3 = Reference(ws_rit, min_col=1, min_row=2, max_row=ws_rit.max_row)
+        chart3.add_data(data3, titles_from_data=True)
+        chart3.set_categories(cats3)
+        chart3.title = "Ritmo actual vs necesario"
+        chart3.y_axis.title = "Monto"
+        chart3.x_axis.title = "Proceso"
+        chart3.height = 7
+        chart3.width = 15
+        ws_rit.add_chart(chart3, "E2")
 
     output = io.BytesIO()
     wb.save(output)
@@ -299,8 +373,8 @@ st.subheader("Filtros")
 filter_cols = [c for c in df.columns if any(k in c for k in [
     "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
     "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
-    "producto_proyecto","activ_obra_accinv","meta","sec_func","departamento_meta",
-    "provincia_meta","distrito_meta","area"
+    "producto_proyecto","activ_obra_accinv","meta","sec_func",
+    "departamento_meta","provincia_meta","distrito_meta","area"
 ])]
 
 cols_f = st.columns(3)
@@ -330,9 +404,9 @@ df_proc = build_classifier_columns(df_proc)
 st.subheader("Resumen ejecutivo (totales)")
 dev_cols = [c for c in df_proc.columns if c.startswith("mto_devenga_")]
 
-tot_pia  = float(df_proc.get("mto_pia", 0).sum())
-tot_pim  = float(df_proc.get("mto_pim", 0).sum())
-tot_dev  = float(df_proc.get("devengado", 0).sum())
+tot_pia = float(df_proc.get("mto_pia", 0).sum())
+tot_pim = float(df_proc.get("mto_pim", 0).sum())
+tot_dev = float(df_proc.get("devengado", 0).sum())
 tot_cert = float(df_proc.get("mto_certificado", 0).sum()) if "mto_certificado" in df_proc.columns else 0.0
 tot_comp = float(df_proc.get("mto_compro_anual", 0).sum()) if "mto_compro_anual" in df_proc.columns else 0.0
 saldo_pim = tot_pim - tot_dev if tot_pim else 0.0
@@ -390,14 +464,27 @@ st.dataframe(df_ci, use_container_width=True)
 # =========================
 # Consolidado por clasificador
 # =========================
-agg_cols = [c for c in ["mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim"] if c in df_proc.columns]
+agg_cols = [
+    c
+    for c in [
+        "mto_pia",
+        "mto_pim",
+        "mto_certificado",
+        "mto_compro_anual",
+        "devengado_mes",
+        "devengado",
+        "saldo_pim",
+    ]
+    if c in df_proc.columns
+]
 consolidado = df_proc.groupby(
     ["clasificador_cod","clasificador_desc","generica","subgenerica","subgenerica_det","especifica","especifica_det"],
     dropna=False
 )[agg_cols].sum().reset_index()
 
 if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
-    consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0,0.0)
+    consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
+
 st.markdown("**Consolidado por clasificador**")
 consol_display = consolidado.head(500)
 if "avance_%" in consol_display.columns:
@@ -448,30 +535,50 @@ if dev_cols and "mto_pim" in df_proc.columns:
     )
 
     if current_month < 12 and pim_total > 0:
-        st.subheader("Proyección de ejecución")
-        target_total = pim_total * float(meta_avance) / 100.0
-        dev_acum = dev_series.loc[dev_series["mes"] <= current_month, "monto"].sum()
-        remaining_needed = max(target_total - dev_acum, 0)
+        st.subheader("Proyección de ejecución por área")
+        # Devengado real por sec_func y mes
+        dev_sec = df_proc.groupby("sec_func")[dev_cols].sum().reset_index()
+        dev_sec_long = dev_sec.melt(id_vars="sec_func", var_name="col", value_name="monto")
+        dev_sec_long["mes"] = dev_sec_long["col"].map({f"mto_devenga_{i:02d}": i for i in range(1, 13)})
+        dev_sec_long = dev_sec_long.dropna(subset=["mes"])
+        real_sec = dev_sec_long[dev_sec_long["mes"] <= current_month].copy()
+
+        pim_sec = df_proc.groupby("sec_func")["mto_pim"].sum()
+        dev_acum_sec = real_sec.groupby("sec_func")["monto"].sum()
+        target_sec = pim_sec * float(meta_avance) / 100.0
+        remaining_sec = (target_sec - dev_acum_sec).clip(lower=0)
         remaining_months = 12 - current_month
-        proj_months = list(range(current_month + 1, 13))
-        proj_per_month = remaining_needed / remaining_months if remaining_months > 0 else 0
-        proj_df = pd.DataFrame({"mes": proj_months, "monto": [proj_per_month] * len(proj_months), "tipo": "Necesario"})
-        real_df = dev_series[["mes", "monto"]].copy()
-        real_df["tipo"] = "Real"
-        dev_proj = pd.concat([real_df, proj_df], ignore_index=True)
+
+        proj_records = []
+        for sec, rem in remaining_sec.items():
+            per_month = rem / remaining_months if remaining_months > 0 else 0
+            for m in range(current_month + 1, 13):
+                proj_records.append({"sec_func": sec, "mes": m, "monto": per_month, "tipo": "Necesario"})
+
+        real_sec["tipo"] = "Real"
+        proj_sec = pd.DataFrame(proj_records)
+        dev_proj_sec = pd.concat([real_sec[["sec_func", "mes", "monto", "tipo"]], proj_sec], ignore_index=True)
+
         chart_proj = (
-            alt.Chart(dev_proj)
+            alt.Chart(dev_proj_sec)
             .mark_bar()
             .encode(
                 x=alt.X("mes:O", title="Mes"),
                 y=alt.Y("monto:Q", title="Devengado"),
-                color="tipo:N",
-                tooltip=["mes", alt.Tooltip("monto", format=",")],
+                color=alt.Color("sec_func:N", title="Área"),
+                column=alt.Column("tipo:N", title=""),
+                tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",")],
             )
-            .properties(width=600, height=250)
+            .properties(width=150, height=250)
         )
-        st.altair_chart(chart_proj, use_container_width=False)
-        proyeccion_wide = dev_proj.pivot_table(index="mes", columns="tipo", values="monto", fill_value=0).reset_index()
+        st.altair_chart(chart_proj, use_container_width=True)
+
+        proyeccion_wide = (
+            dev_proj_sec.pivot_table(index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0)
+            .sort_index(axis=1)
+            .reset_index()
+        )
+        proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
 
 ritmo_df = pd.DataFrame()
 if "mto_pim" in df_proc.columns:
@@ -496,7 +603,7 @@ if "mto_pim" in df_proc.columns:
             color="Tipo:N",
             tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",")],
         )
-        .properties(width=600, height=250)
+        .properties(width=600, height=300)
     )
     st.altair_chart(chart_ritmo, use_container_width=False)
 
