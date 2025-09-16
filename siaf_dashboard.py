@@ -48,12 +48,12 @@ with st.sidebar:
 
 # Mapeo de códigos de sec_func a nombres
 SEC_FUNC_MAP = {
-    1: "PI 2",
-    2: "DCEME 2",
+    1: "PI_2",
+    2: "DCEME",
     3: "DE",
-    4: "PI 1",
+    4: "PI_1",
     5: "OPP",
-    6: "JEFATURA",
+    6: "JEF",
     7: "GG",
     8: "OAUGD",
     9: "OTI",
@@ -62,13 +62,10 @@ SEC_FUNC_MAP = {
     12: "OAJ",
     13: "RRHH",
     14: "OCI",
-    15: "DCEME 15",
-    16: "DETN 16",
-    18: "DCEME 18",
-    19: "DCME 19",
-    20: "DETN 20",
-    21: "DETN 21",
-    22: "DETN 22",
+    15: "DCEME15",
+    16: "DETN16",
+    21: "DETN21",
+    22: "DETN22",
 }
 SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
 
@@ -609,6 +606,50 @@ if "mto_pim" in df_view.columns:
         .properties(width=600, height=300)
     )
     st.altair_chart(chart_ritmo, use_container_width=False)
+
+# =========================
+# Top sec_func con menor avance
+# =========================
+if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
+    st.subheader("Top áreas con menor avance")
+    agg_sec = df_view.groupby("sec_func", dropna=False)[["mto_pim", "devengado", "devengado_mes"]].sum().reset_index()
+    if not agg_sec.empty:
+        agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
+        agg_sec["avance_mes_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0)
+
+        max_top = int(agg_sec.shape[0])
+        top_default = 5 if max_top >= 5 else max_top
+        top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top, value=top_default)
+
+        highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
+
+        col_mes, col_acum = st.columns(2)
+
+        with col_mes:
+            st.caption("Avance mensual más bajo")
+            top_mes = (
+                agg_sec[["sec_func", "mto_pim", "devengado_mes", "avance_mes_%"]]
+                .sort_values("avance_mes_%", ascending=True)
+                .head(top_n)
+            )
+            st.dataframe(
+                top_mes.style.applymap(highlight, subset=["avance_mes_%"]),
+                use_container_width=True,
+            )
+
+        with col_acum:
+            st.caption("Avance acumulado más bajo")
+            top_acum = (
+                agg_sec[["sec_func", "mto_pim", "devengado", "avance_acum_%"]]
+                .sort_values("avance_acum_%", ascending=True)
+                .head(top_n)
+            )
+            st.dataframe(
+                top_acum.style.applymap(highlight, subset=["avance_acum_%"]),
+                use_container_width=True,
+            )
+    else:
+        st.info("No hay datos disponibles para calcular el rendimiento por área.")
 
 # =========================
 # Descarga a Excel
