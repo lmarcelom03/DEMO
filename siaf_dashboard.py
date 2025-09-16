@@ -49,7 +49,7 @@ with st.sidebar:
 # Mapeo de códigos de sec_func a nombres
 SEC_FUNC_MAP = {
     1: "PI 2",
-    2: "DCEME",
+    2: "DCEME 2",
     3: "DE",
     4: "PI 1",
     5: "OPP",
@@ -62,13 +62,13 @@ SEC_FUNC_MAP = {
     12: "OAJ",
     13: "RRHH",
     14: "OCI",
-    15: "DCEME",
-    16: "DETN",
-    18: "DCEME",
-    19: "DCME",
-    20: "DETN",
-    21: "DETN",
-    22: "DETN",
+    15: "DCEME 15",
+    16: "DETN 16",
+    18: "DCEME 18",
+    19: "DCME 19",
+    20: "DETN 20",
+    21: "DETN 21",
+    22: "DETN 22",
 }
 SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
 
