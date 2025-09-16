@@ -1,8 +1,3 @@
-diff --git a/siaf_dashboard.py b/siaf_dashboard.py
-index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d1977bed80f3 100644
---- a/siaf_dashboard.py
-+++ b/siaf_dashboard.py
-@@ -1,61 +1,129 @@
  import re
  import io
  import numpy as np
