@@ -3,7 +3,6 @@
  import numpy as np
  import pandas as pd
  import streamlit as st
--import matplotlib.pyplot as plt
 +import altair as alt
 +from openpyxl import Workbook
 +from openpyxl.utils.dataframe import dataframe_to_rows
@@ -20,7 +19,6 @@
  
  st.markdown(
      "Carga el **Excel SIAF** y obtén resúmenes de **PIA, PIM, Certificado, Comprometido, Devengado, Saldo PIM y % Avance**. "
--    "Lee por defecto **A:EC** (base hasta CH + pasos CI–EC). "
 +    "Lee por defecto **A:CH** (base hasta CI). "
      "Construye el **clasificador concatenado** y lo **normaliza para que siempre comience con `2.`**; además agrega una **descripción jerárquica**. "
      "Incluye filtros, pivotes, serie mensual y descarga a Excel."
@@ -32,7 +30,6 @@
  with st.sidebar:
      st.header("Parámetros de lectura")
      uploaded = st.file_uploader("Archivo SIAF (.xlsx)", type=["xlsx"])
--    usecols = st.text_input("Rango de columnas (Excel)", "A:EC", help="Recomendado para incluir CI–EC.")
 +    usecols = st.text_input(
 +        "Rango de columnas (Excel)",
 +        "A:CH",
@@ -160,7 +157,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
  
      return g
  
--def to_excel_download(**dfs):
 +def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
 +    wb = Workbook()
 +    # remove the default sheet to control ordering
@@ -197,11 +193,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
 +        add_table_with_chart(ritmo, "Ritmo")
 +
      output = io.BytesIO()
--    with pd.ExcelWriter(output, engine="openpyxl") as writer:
--        for name, d in dfs.items():
--            # Trunca el nombre de hoja a 31 chars (límite Excel)
--            sheet = name[:31] or "Sheet1"
--            d.to_excel(writer, index=False, sheet_name=sheet)
 +    wb.save(output)
      output.seek(0)
      return output
@@ -210,7 +201,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
  # Carga del archivo
  # =========================
  if uploaded is None:
--    st.info("Sube tu archivo Excel SIAF para empezar. Usa A:EC para incluir pasos CI–EC.")
 +    st.info("Sube tu archivo Excel SIAF para empezar. Usa A:CH para incluir pasos CI–EC.")
      st.stop()
  
@@ -280,8 +270,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
  default_idx = group_options.index("clasificador_cod") if "clasificador_cod" in group_options else 0
  group_col = st.selectbox("Agrupar por", options=group_options, index=default_idx)
  
--pivot = pivot_exec(df_proc, group_col, dev_cols)
--st.dataframe(pivot, use_container_width=True)
 +group_vals = ["(Todos)"] + sorted(df_proc[group_col].dropna().astype(str).unique().tolist())
 +group_val = st.selectbox(f"Filtrar {group_col}", options=group_vals, index=0)
 +df_view = df_proc if group_val == "(Todos)" else df_proc[df_proc[group_col].astype(str) == group_val]
@@ -305,8 +293,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
      "mto_pia","mto_pim","mto_certificado","mto_compro_anual",
      "devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
  ]
--ci_cols = [c for c in ci_cols if c in df_proc.columns]
--st.dataframe(df_proc[ci_cols].head(300), use_container_width=True)
 +ci_cols = [c for c in ci_cols if c in df_view.columns]
 +df_ci = df_view[ci_cols].head(300)
 +if "avance_%" in df_ci.columns:
@@ -319,8 +305,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
  # =========================
  # Consolidado por clasificador
  # =========================
--agg_cols = [c for c in ["mto_pia","mto_pim","mto_certificado","mto_compro_anual","devengado_mes","devengado","saldo_pim"] if c in df_proc.columns]
--consolidado = df_proc.groupby(
 +agg_cols = [
 +    c
 +    for c in [
@@ -343,7 +327,6 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
      consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
  
  st.markdown("**Consolidado por clasificador**")
--st.dataframe(consolidado.head(500), use_container_width=True)
 +consol_display = consolidado.head(500)
 +if "avance_%" in consol_display.columns:
 +    consol_display = consol_display.style.applymap(
@@ -353,22 +336,17 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
 +st.dataframe(consol_display, use_container_width=True)
  
  # =========================
--# Serie mensual de devengado
 +# Serie mensual interactiva
  # =========================
--if dev_cols:
--    st.subheader("Devengado mensual (por filtro actual)")
 +avance_series = pd.DataFrame()
 +proyeccion_wide = pd.DataFrame()
 +if dev_cols and "mto_pim" in df_view.columns:
 +    st.subheader("Avance mensual interactivo")
      month_map = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
--    dev_series = df_proc[dev_cols].sum().reset_index()
 +    dev_series = df_view[dev_cols].sum().reset_index()
      dev_series.columns = ["col", "monto"]
      dev_series["mes"] = dev_series["col"].map(month_map)
      dev_series = dev_series.sort_values("mes")
--    st.dataframe(dev_series[["mes", "monto"]], use_container_width=True)
 +    pim_total = df_view["mto_pim"].sum()
 +    dev_series["contrib_pct"] = np.where(pim_total > 0, dev_series["monto"] / pim_total * 100.0, 0.0)
 +    dev_series["riesgo"] = dev_series["contrib_pct"] < float(riesgo_umbral)
@@ -436,13 +414,7 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
 +        )
 +        st.altair_chart(chart_proj, use_container_width=True)
  
--    # Gráfico de barras simple con matplotlib (sin estilos personalizados)
--    fig, ax = plt.subplots()
--    ax.bar(dev_series["mes"].astype(int), dev_series["monto"].values)
--    ax.set_xlabel("Mes")
--    ax.set_ylabel("Devengado (S/)")
--    ax.set_title("Devengado mensual (acumulado por filtro)")
--    st.pyplot(fig)
+
 +        proyeccion_wide = (
 +            dev_proj_sec.pivot_table(index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0)
 +            .sort_index(axis=1)
@@ -480,18 +452,11 @@ index 03cd42206e19df1bef0c31382f641988b5d42d35..adbcb654d983dc027c9b14a63a85d197
  # =========================
  # Descarga a Excel
  # =========================
--buf = to_excel_download(
--    Datos_filtrados_CI_EC=df_proc,
--    Resumen=pivot,
--    Consolidado_Clasificador=consolidado
--)
+
 +buf = to_excel_download(resumen=pivot, avance=avance_series, proyeccion=proyeccion_wide, ritmo=ritmo_df)
  st.download_button(
--    "Descargar Excel (CI–EC + Resumen + Clasificador)",
 +    "Descargar Excel (Resumen + Avance)",
      data=buf,
--    file_name="siaf_ci_ec_clasificador.xlsx",
--    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 +    file_name="siaf_resumen_avance.xlsx",
 +    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
  )
