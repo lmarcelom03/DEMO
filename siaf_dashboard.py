@@ -1,5 +1,8 @@
 import re
 import io
+import smtplib
+from email.message import EmailMessage
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -156,12 +159,32 @@ def build_style_formatters(df):
             formatters[col] = _format_amount
     return formatters
 
+
+def compose_email_body(template, row, meta_avance):
+    """Format the user-provided email template with area metrics."""
+    def _safe_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    context = {
+        "area": row.get("sec_func", ""),
+        "avance_acum": _safe_float(row.get("avance_acum_%", 0.0)),
+        "avance_mes": _safe_float(row.get("avance_mes_%", 0.0)),
+        "pim": _safe_float(row.get("mto_pim", 0.0)),
+        "devengado": _safe_float(row.get("devengado", 0.0)),
+        "devengado_mes": _safe_float(row.get("devengado_mes", 0.0)),
+        "meta": _safe_float(meta_avance),
+    }
+    return template.format(**context)
+
 # =========================
 # Utilitarios de carga
 # =========================
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
     """
-    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', 'mto_', 'devenga', 'girado').
+    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', etc.).
     Retorna (sheet_name, header_row_index_pandas).
     """
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
@@ -796,11 +819,131 @@ if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
         st.info("No hay datos disponibles para calcular el rendimiento por área.")
 
 # =========================
+# Gestión de alertas por correo
+# =========================
+st.subheader("Automatización de alertas por Outlook")
+st.markdown(
+    "Configura destinatarios, redacta una plantilla y envía correos de alerta para las áreas con avance por debajo del umbral."
+)
+
+if "alert_contacts" not in st.session_state:
+    st.session_state["alert_contacts"] = {}
+
+alert_df = leaderboard_df.copy()
+if alert_df.empty:
+    st.info("No hay áreas con avance por debajo del umbral definido. Ajusta los filtros o el umbral para generar alertas.")
+else:
+    alert_display = round_numeric_for_reporting(alert_df.copy())
+    fmt_alert = build_style_formatters(alert_display)
+    highlight_alert = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
+    alert_style = alert_display.style.applymap(
+        highlight_alert,
+        subset=[c for c in ["avance_acum_%", "avance_mes_%"] if c in alert_display.columns],
+    )
+    if fmt_alert:
+        alert_style = alert_style.format(fmt_alert)
+    st.dataframe(alert_style, use_container_width=True)
+
+    alert_areas = sorted(alert_df["sec_func"].astype(str).unique())
+    for area in alert_areas:
+        st.session_state["alert_contacts"].setdefault(area, "")
+
+    st.markdown("### Contactos por área en riesgo")
+    contact_df = pd.DataFrame(
+        {
+            "Área": alert_areas,
+            "Correo": [st.session_state["alert_contacts"].get(area, "") for area in alert_areas],
+        }
+    )
+    edited_contacts = st.data_editor(
+        contact_df,
+        key="alert_contacts_editor",
+        num_rows="fixed",
+        use_container_width=True,
+    )
+    if st.button("Guardar contactos", key="save_contacts"):
+        updated_contacts = {}
+        for area, email in zip(alert_areas, edited_contacts["Correo"].tolist()):
+            if isinstance(email, str):
+                clean_email = email.strip()
+            elif pd.notna(email):
+                clean_email = str(email).strip()
+            else:
+                clean_email = ""
+            if clean_email:
+                updated_contacts[area] = clean_email
+        st.session_state["alert_contacts"] = updated_contacts
+        st.success("Contactos actualizados correctamente.")
+
+    missing_contacts = [area for area in alert_areas if not st.session_state["alert_contacts"].get(area)]
+    if missing_contacts:
+        st.info(
+            "Faltan correos para: " + ", ".join(missing_contacts)
+        )
+
+    st.markdown("### Configurar envío de correos")
+    sender_email = st.text_input("Cuenta Outlook (remitente)")
+    app_password = st.text_input("Contraseña o app password de Outlook", type="password")
+    smtp_server = st.text_input("Servidor SMTP", value="smtp.office365.com")
+    smtp_port = st.number_input("Puerto SMTP", min_value=1, max_value=65535, value=587, step=1)
+
+    subject = st.text_input("Asunto del correo", key="email_subject")
+    body_template = st.text_area(
+        "Plantilla del mensaje (usa llaves para reemplazos como {area}, {avance_acum}, {avance_mes}, {pim})",
+        key="email_body_template",
+        height=220,
+    )
+
+    preview_area = st.selectbox("Vista previa del mensaje", alert_areas, key="preview_area")
+    if preview_area:
+        preview_row = alert_df[alert_df["sec_func"].astype(str) == preview_area].iloc[0]
+        preview_body = compose_email_body(body_template, preview_row, meta_avance)
+        st.code(preview_body)
+
+    if st.button("Enviar correos de alerta", key="send_alerts"):
+        if not sender_email or not app_password:
+            st.error("Debes ingresar la cuenta y la contraseña o app password de Outlook.")
+        else:
+            active_contacts = {
+                area: email.strip()
+                for area, email in st.session_state["alert_contacts"].items()
+                if isinstance(email, str) and email.strip()
+            }
+            if not active_contacts:
+                st.warning("No hay correos configurados para las áreas en riesgo.")
+            else:
+                messages = []
+                for area, recipient in active_contacts.items():
+                    row_match = alert_df[alert_df["sec_func"].astype(str) == area]
+                    if row_match.empty:
+                        continue
+                    row = row_match.iloc[0]
+                    body = compose_email_body(body_template, row, meta_avance)
+                    msg = EmailMessage()
+                    msg["Subject"] = subject
+                    msg["From"] = sender_email
+                    msg["To"] = recipient
+                    msg.set_content(body)
+                    messages.append(msg)
+                if not messages:
+                    st.warning("No se generaron mensajes para enviar.")
+                else:
+                    try:
+                        with smtplib.SMTP(smtp_server, int(smtp_port)) as smtp:
+                            smtp.starttls()
+                            smtp.login(sender_email, app_password)
+                            for msg in messages:
+                                smtp.send_message(msg)
+                        st.success(f"Se enviaron {len(messages)} alerta(s) correctamente.")
+                    except Exception as exc:
+                        st.error(f"No se pudieron enviar los correos: {exc}")
+
+# =========================
 # Descarga a Excel
 # =========================
 buf = to_excel_download(
     resumen=round_numeric_for_reporting(pivot.copy()),
-    avance=round_numeric_for_reporting(avance_series.copy()),
+    avance=round_numeric_for_reporting(avance_series.rename(columns={"contrib_pct": "contrib_%"})),
     proyeccion=proyeccion_wide,
     ritmo=round_numeric_for_reporting(ritmo_df.copy()),
     leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
