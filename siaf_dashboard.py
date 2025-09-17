@@ -161,7 +161,7 @@ def build_style_formatters(df):
 # =========================
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
     """
-    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', etc.).
+    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', 'mto_', 'devenga', 'girado').
     Retorna (sheet_name, header_row_index_pandas).
     """
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
@@ -361,7 +361,7 @@ def pivot_exec(df, group_col, dev_cols):
 
     return g
 
-def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
+def to_excel_download(resumen, avance, proyeccion=None, ritmo=None, leaderboard=None):
     wb = Workbook()
     # remove the default sheet to control ordering
     wb.remove(wb.active)
@@ -625,7 +625,7 @@ if dev_cols and "mto_pim" in df_view.columns:
             dev_sec_long["mes"] = dev_sec_long["col"].map({f"mto_devenga_{i:02d}": i for i in range(1, 13)})
             dev_sec_long = dev_sec_long.dropna(subset=["mes"])
             if dev_sec_long.empty:
-                st.info("No hay datos históricos suficientes para proyectar la ejecucin por área.")
+                st.info("No hay datos históricos suficientes para proyectar la ejecución por área.")
             else:
                 real_sec = dev_sec_long[dev_sec_long["mes"] <= current_month].copy()
                 real_sec["sec_func"] = real_sec["sec_func"].astype(str)
@@ -670,7 +670,7 @@ if dev_cols and "mto_pim" in df_view.columns:
                                 column=alt.Column("tipo:N", title=""),
                                 tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",.2f")],
                             )
-                            .properties(width=150, height=220)
+                            .properties(width=160, height=240)
                         )
                         st.altair_chart(chart_proj, use_container_width=True)
                         proyeccion_wide = (
@@ -683,7 +683,36 @@ if dev_cols and "mto_pim" in df_view.columns:
                         proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
                         proyeccion_wide = round_numeric_for_reporting(proyeccion_wide)
 
+                        pim_sec = df_view.groupby("sec_func")["mto_pim"].sum().reindex(unique_areas, fill_value=0.0)
+                        real_totals = real_sec.groupby("sec_func")["monto"].sum().reindex(unique_areas, fill_value=0.0)
+                        proyectado_futuro = stats["per_mes_proj"] * remaining_months
+                        total_estimado = real_totals + proyectado_futuro
+                        avance_estimado = np.where(pim_sec > 0, total_estimado / pim_sec * 100.0, 0.0)
+
+                        proyeccion_resumen = pd.DataFrame(
+                            {
+                                "sec_func": unique_areas,
+                                "devengado_real": real_totals.values,
+                                "proyeccion_futura": proyectado_futuro.values,
+                                "total_estimado": total_estimado.values,
+                                "mto_pim": pim_sec.values,
+                                "avance_estimado_%": avance_estimado,
+                            }
+                        )
+                        proyeccion_resumen = round_numeric_for_reporting(proyeccion_resumen)
+                        fmt_proj = build_style_formatters(proyeccion_resumen)
+                        resumen_style = proyeccion_resumen.style
+                        if "avance_estimado_%" in proyeccion_resumen.columns:
+                            resumen_style = resumen_style.applymap(
+                                lambda v: "background-color: #ffcccc" if v < float(meta_avance) else "",
+                                subset=["avance_estimado_%"],
+                            )
+                        if fmt_proj:
+                            resumen_style = resumen_style.format(fmt_proj)
+                        st.dataframe(resumen_style, use_container_width=True)
+
 ritmo_df = pd.DataFrame()
+leaderboard_df = pd.DataFrame()
 if "mto_pim" in df_view.columns:
     st.subheader("Ritmo requerido por proceso")
     remaining_months = max(12 - current_month, 1)
@@ -703,21 +732,23 @@ if "mto_pim" in df_view.columns:
         .mark_bar()
         .encode(
             x=alt.X("Proceso:N"),
-            y=alt.Y("Monto:Q"),
+            y=alt.Y("Monto:Q", axis=alt.Axis(format=",.2f")),
             color="Tipo:N",
             tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
         )
-        .properties(width=520, height=220)
+        .properties(width=600, height=300)
     )
     st.altair_chart(chart_ritmo, use_container_width=False)
 
 # =========================
 # Top sec_func con menor avance (leaderboard)
 # =========================
-leaderboard_df = pd.DataFrame()
 if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
     st.subheader("Top áreas con menor avance")
-    agg_sec = df_view.groupby("sec_func", dropna=False)[["mto_pim", "devengado", "devengado_mes"]].sum().reset_index()
+    agg_cols = ["mto_pim", "devengado", "devengado_mes"]
+    if "mto_certificado" in df_view.columns:
+        agg_cols.insert(1, "mto_certificado")
+    agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
     if not agg_sec.empty:
         agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
         agg_sec["avance_mes_%"] = np.where(
@@ -740,18 +771,27 @@ if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
             "rank_mes",
             "sec_func",
             "mto_pim",
+        ]
+        if "mto_certificado" in agg_sec.columns:
+            display_cols.append("mto_certificado")
+        display_cols.extend([
             "devengado",
             "avance_acum_%",
             "devengado_mes",
             "avance_mes_%",
-        ]
+        ])
         leaderboard_df = leaderboard_df[display_cols]
-        leaderboard_df = round_numeric_for_reporting(leaderboard_df)
+
+        leaderboard_display = round_numeric_for_reporting(leaderboard_df)
+        fmt_leader = build_style_formatters(leaderboard_display)
         highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
-        st.dataframe(
-            leaderboard_df.style.applymap(highlight, subset=["avance_acum_%", "avance_mes_%"]),
-            use_container_width=True,
+        leader_style = leaderboard_display.style.applymap(
+            highlight,
+            subset=["avance_acum_%", "avance_mes_%"],
         )
+        if fmt_leader:
+            leader_style = leader_style.format(fmt_leader)
+        st.dataframe(leader_style, use_container_width=True)
     else:
         st.info("No hay datos disponibles para calcular el rendimiento por área.")
 
