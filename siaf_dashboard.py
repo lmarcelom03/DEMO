@@ -99,6 +99,63 @@ def map_sec_func(value):
 
     return SEC_FUNC_MAP.get(text, value)
 
+
+AMOUNT_KEYWORDS = (
+    "mto",
+    "devengado",
+    "saldo",
+    "pia",
+    "pim",
+    "certificado",
+    "compro",
+    "monto",
+    "actual",
+    "real",
+    "necesario",
+    "estimado",
+    "proyeccion",
+)
+EXCLUDE_ROUND_COLS = {"mes", "rank_acum", "rank_mes", "n"}
+Z_SCORE_95 = 1.96
+
+
+def _format_amount(value):
+    return "" if pd.isna(value) else f"{value:,.2f}"
+
+
+def _format_percent(value):
+    return "" if pd.isna(value) else f"{value:.2f}%"
+
+
+def round_numeric_for_reporting(df):
+    """Round monetary/percentage numeric columns to two decimals without altering counts."""
+    df = df.copy()
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        if col in EXCLUDE_ROUND_COLS:
+            continue
+        lower = col.lower()
+        if col.endswith("%"):
+            df[col] = df[col].round(2)
+        elif any(keyword in lower for keyword in AMOUNT_KEYWORDS):
+            df[col] = df[col].round(2)
+    return df
+
+
+def build_style_formatters(df):
+    """Return formatter dict for Streamlit Styler with 2-decimal monetary and percent columns."""
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    formatters = {}
+    for col in numeric_cols:
+        if col in EXCLUDE_ROUND_COLS:
+            continue
+        lower = col.lower()
+        if col.endswith("%"):
+            formatters[col] = _format_percent
+        elif any(keyword in lower for keyword in AMOUNT_KEYWORDS):
+            formatters[col] = _format_amount
+    return formatters
+
 # =========================
 # Utilitarios de carga
 # =========================
@@ -313,6 +370,9 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         ws = wb.create_sheet(sheet_name)
         for r in dataframe_to_rows(df, index=False, header=True):
             ws.append(r)
+        # Skip table/chart creation when there are no data rows
+        if ws.max_row <= 1:
+            return
         # create an Excel table for easier filtering in the workbook
         ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
         tbl = Table(displayName=f"Tbl{sheet_name[:20].replace(' ','_')}", ref=ref)
@@ -338,6 +398,8 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None):
         add_table_with_chart(proyeccion, "Proyeccion")
     if ritmo is not None and not ritmo.empty:
         add_table_with_chart(ritmo, "Ritmo")
+    if leaderboard is not None and not leaderboard.empty:
+        add_table_with_chart(leaderboard, "Leaderboard")
 
     output = io.BytesIO()
     wb.save(output)
@@ -434,13 +496,17 @@ group_val = st.selectbox(f"Filtrar {group_col}", options=group_vals, index=0)
 df_view = df_proc if group_val == "(Todos)" else df_proc[df_proc[group_col].astype(str) == group_val]
 
 pivot = pivot_exec(df_view, group_col, dev_cols)
-pivot_display = pivot
+pivot_display = round_numeric_for_reporting(pivot)
+fmt_pivot = build_style_formatters(pivot_display)
+pivot_style = pivot_display.style
 if "avance_%" in pivot_display.columns:
-    pivot_display = pivot_display.style.applymap(
+    pivot_style = pivot_style.applymap(
         lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
         subset=["avance_%"],
     )
-st.dataframe(pivot_display, use_container_width=True)
+if fmt_pivot:
+    pivot_style = pivot_style.format(fmt_pivot)
+st.dataframe(pivot_style, use_container_width=True)
 
 # =========================
 # Procesos CI–EC (detalle)
@@ -454,12 +520,17 @@ ci_cols = [
 ]
 ci_cols = [c for c in ci_cols if c in df_view.columns]
 df_ci = df_view[ci_cols].head(300)
-if "avance_%" in df_ci.columns:
-    df_ci = df_ci.style.applymap(
+df_ci_display = round_numeric_for_reporting(df_ci)
+fmt_ci = build_style_formatters(df_ci_display)
+ci_style = df_ci_display.style
+if "avance_%" in df_ci_display.columns:
+    ci_style = ci_style.applymap(
         lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
         subset=["avance_%"],
     )
-st.dataframe(df_ci, use_container_width=True)
+if fmt_ci:
+    ci_style = ci_style.format(fmt_ci)
+st.dataframe(ci_style, use_container_width=True)
 
 # =========================
 # Consolidado por clasificador
@@ -487,12 +558,17 @@ if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
 
 st.markdown("**Consolidado por clasificador**")
 consol_display = consolidado.head(500)
+consol_display = round_numeric_for_reporting(consol_display)
+fmt_consol = build_style_formatters(consol_display)
+consol_style = consol_display.style
 if "avance_%" in consol_display.columns:
-    consol_display = consol_display.style.applymap(
+    consol_style = consol_style.applymap(
         lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
         subset=["avance_%"],
     )
-st.dataframe(consol_display, use_container_width=True)
+if fmt_consol:
+    consol_style = consol_style.format(fmt_consol)
+st.dataframe(consol_style, use_container_width=True)
 
 # =========================
 # Serie mensual interactiva
@@ -509,76 +585,103 @@ if dev_cols and "mto_pim" in df_view.columns:
     pim_total = df_view["mto_pim"].sum()
     dev_series["contrib_pct"] = np.where(pim_total > 0, dev_series["monto"] / pim_total * 100.0, 0.0)
     dev_series["riesgo"] = dev_series["contrib_pct"] < float(riesgo_umbral)
+    dev_series["monto"] = dev_series["monto"].round(2)
+    dev_series["contrib_pct"] = dev_series["contrib_pct"].round(2)
     avance_series = dev_series[["mes", "monto", "contrib_pct"]]
     chart = (
         alt.Chart(dev_series)
         .mark_bar()
         .encode(
             x=alt.X("mes:O", title="Mes"),
-            y=alt.Y("contrib_pct:Q", title="% contribución"),
+            y=alt.Y("contrib_pct:Q", title="% contribución", axis=alt.Axis(format=".2f")),
             color=alt.condition(alt.datum.riesgo, alt.value("#ff6961"), alt.value("#1f77b4")),
             tooltip=[
                 "mes",
-                alt.Tooltip("monto", title="Devengado", format=","),
+                alt.Tooltip("monto", title="Devengado", format=",.2f"),
                 alt.Tooltip("contrib_pct", title="Contrib. %", format=".2f"),
             ],
         )
-        .properties(width=600, height=250)
+        .properties(width=520, height=220)
     )
     st.altair_chart(chart, use_container_width=False)
-    st.dataframe(
-        avance_series.style.applymap(
-            lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-            subset=["contrib_pct"],
-        ),
-        use_container_width=True,
+    avance_series_display = avance_series.rename(columns={"contrib_pct": "contrib_%"})
+    avance_series_display = round_numeric_for_reporting(avance_series_display)
+    fmt_avance = build_style_formatters(avance_series_display)
+    avance_style = avance_series_display.style.applymap(
+        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+        subset=["contrib_%"],
     )
+    if fmt_avance:
+        avance_style = avance_style.format(fmt_avance)
+    st.dataframe(avance_style, use_container_width=True)
 
     if current_month < 12 and pim_total > 0:
-        st.subheader("Proyección de ejecución por área")
-        # Devengado real por sec_func y mes
-        dev_sec = df_view.groupby("sec_func")[dev_cols].sum().reset_index()
-        dev_sec_long = dev_sec.melt(id_vars="sec_func", var_name="col", value_name="monto")
-        dev_sec_long["mes"] = dev_sec_long["col"].map({f"mto_devenga_{i:02d}": i for i in range(1, 13)})
-        dev_sec_long = dev_sec_long.dropna(subset=["mes"])
-        real_sec = dev_sec_long[dev_sec_long["mes"] <= current_month].copy()
-
-        pim_sec = df_view.groupby("sec_func")["mto_pim"].sum()
-        dev_acum_sec = real_sec.groupby("sec_func")["monto"].sum()
-        target_sec = pim_sec * float(meta_avance) / 100.0
-        remaining_sec = (target_sec - dev_acum_sec).clip(lower=0)
-        remaining_months = 12 - current_month
-
-        proj_records = []
-        for sec, rem in remaining_sec.items():
-            per_month = rem / remaining_months if remaining_months > 0 else 0
-            for m in range(current_month + 1, 13):
-                proj_records.append({"sec_func": sec, "mes": m, "monto": per_month, "tipo": "Necesario"})
-
-        real_sec["tipo"] = "Real"
-        proj_sec = pd.DataFrame(proj_records)
-        dev_proj_sec = pd.concat([real_sec[["sec_func", "mes", "monto", "tipo"]], proj_sec], ignore_index=True)
-
-        chart_proj = (
-            alt.Chart(dev_proj_sec)
-            .mark_bar()
-            .encode(
-                x=alt.X("mes:O", title="Mes"),
-                y=alt.Y("monto:Q", title="Devengado"),
-                color=alt.Color("sec_func:N", title="Área"),
-                column=alt.Column("tipo:N", title=""),
-                tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",")],
-            )
-            .properties(width=150, height=250)
-        )
-        st.altair_chart(chart_proj, use_container_width=True)
-
-        proyeccion_wide = (
-            dev_proj_sec.pivot_table(index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0)
-            .sort_index(axis=1)
-            .reset_index()
-        )
-        proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
+        st.subheader("Proyección de ejecución por área (95% confianza)")
+        if "sec_func" not in df_view.columns:
+            st.info("Agrega la columna sec_func para proyectar la ejecución por área.")
+        else:
+            dev_sec = df_view.groupby("sec_func")[dev_cols].sum().reset_index()
+            dev_sec_long = dev_sec.melt(id_vars="sec_func", var_name="col", value_name="monto")
+            dev_sec_long["mes"] = dev_sec_long["col"].map({f"mto_devenga_{i:02d}": i for i in range(1, 13)})
+            dev_sec_long = dev_sec_long.dropna(subset=["mes"])
+            if dev_sec_long.empty:
+                st.info("No hay datos históricos suficientes para proyectar la ejecucin por área.")
+            else:
+                real_sec = dev_sec_long[dev_sec_long["mes"] <= current_month].copy()
+                real_sec["sec_func"] = real_sec["sec_func"].astype(str)
+                if real_sec.empty:
+                    st.info("No hay registros devengados en los meses analizados para generar la proyección.")
+                else:
+                    remaining_months = max(12 - current_month, 0)
+                    unique_areas = sorted(df_view["sec_func"].dropna().astype(str).unique().tolist())
+                    stats = real_sec.groupby("sec_func")["monto"].agg(["count", "mean", "std"])
+                    stats = stats.reindex(unique_areas).fillna(0.0)
+                    stats.rename(columns={"count": "n", "mean": "mean", "std": "std"}, inplace=True)
+                    stats["per_mes_proj"] = stats.apply(
+                        lambda row: row["mean"] if row["n"] <= 1 or row["std"] == 0 else max(
+                            row["mean"] - Z_SCORE_95 * row["std"] / np.sqrt(row["n"]),
+                            0.0,
+                        ),
+                        axis=1,
+                    )
+                    proj_records = []
+                    for area, row in stats.iterrows():
+                        per_month = row["per_mes_proj"]
+                        if remaining_months > 0:
+                            for m in range(current_month + 1, 13):
+                                proj_records.append(
+                                    {"sec_func": area, "mes": m, "monto": per_month, "tipo": "Necesario"}
+                                )
+                    real_sec["tipo"] = "Real"
+                    proj_sec = pd.DataFrame(proj_records)
+                    dev_proj_sec = pd.concat(
+                        [real_sec[["sec_func", "mes", "monto", "tipo"]], proj_sec],
+                        ignore_index=True,
+                    )
+                    if not dev_proj_sec.empty:
+                        dev_proj_sec["monto"] = dev_proj_sec["monto"].round(2)
+                        chart_proj = (
+                            alt.Chart(dev_proj_sec)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X("mes:O", title="Mes"),
+                                y=alt.Y("monto:Q", title="Devengado"),
+                                color=alt.Color("sec_func:N", title="Área"),
+                                column=alt.Column("tipo:N", title=""),
+                                tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",.2f")],
+                            )
+                            .properties(width=150, height=220)
+                        )
+                        st.altair_chart(chart_proj, use_container_width=True)
+                        proyeccion_wide = (
+                            dev_proj_sec.pivot_table(
+                                index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0
+                            )
+                            .sort_index(axis=1)
+                            .reset_index()
+                        )
+                        proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
+                        proyeccion_wide = round_numeric_for_reporting(proyeccion_wide)
 
 ritmo_df = pd.DataFrame()
 if "mto_pim" in df_view.columns:
@@ -593,6 +696,7 @@ if "mto_pim" in df_view.columns:
         required_avg = needed / remaining_months
         processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
     ritmo_df = pd.DataFrame(processes)
+    ritmo_df = round_numeric_for_reporting(ritmo_df)
     ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
     chart_ritmo = (
         alt.Chart(ritmo_melt)
@@ -601,60 +705,66 @@ if "mto_pim" in df_view.columns:
             x=alt.X("Proceso:N"),
             y=alt.Y("Monto:Q"),
             color="Tipo:N",
-            tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",")],
+            tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
         )
-        .properties(width=600, height=300)
+        .properties(width=520, height=220)
     )
     st.altair_chart(chart_ritmo, use_container_width=False)
 
 # =========================
-# Top sec_func con menor avance
+# Top sec_func con menor avance (leaderboard)
 # =========================
+leaderboard_df = pd.DataFrame()
 if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
     st.subheader("Top áreas con menor avance")
     agg_sec = df_view.groupby("sec_func", dropna=False)[["mto_pim", "devengado", "devengado_mes"]].sum().reset_index()
     if not agg_sec.empty:
         agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
-        agg_sec["avance_mes_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0)
+        agg_sec["avance_mes_%"] = np.where(
+            agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0
+        )
+        agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
+        agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
 
         max_top = int(agg_sec.shape[0])
         top_default = 5 if max_top >= 5 else max_top
         top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top, value=top_default)
 
+        leaderboard_df = (
+            agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
+            .head(top_n)
+            .copy()
+        )
+        display_cols = [
+            "rank_acum",
+            "rank_mes",
+            "sec_func",
+            "mto_pim",
+            "devengado",
+            "avance_acum_%",
+            "devengado_mes",
+            "avance_mes_%",
+        ]
+        leaderboard_df = leaderboard_df[display_cols]
+        leaderboard_df = round_numeric_for_reporting(leaderboard_df)
         highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
-
-        col_mes, col_acum = st.columns(2)
-
-        with col_mes:
-            st.caption("Avance mensual más bajo")
-            top_mes = (
-                agg_sec[["sec_func", "mto_pim", "devengado_mes", "avance_mes_%"]]
-                .sort_values("avance_mes_%", ascending=True)
-                .head(top_n)
-            )
-            st.dataframe(
-                top_mes.style.applymap(highlight, subset=["avance_mes_%"]),
-                use_container_width=True,
-            )
-
-        with col_acum:
-            st.caption("Avance acumulado más bajo")
-            top_acum = (
-                agg_sec[["sec_func", "mto_pim", "devengado", "avance_acum_%"]]
-                .sort_values("avance_acum_%", ascending=True)
-                .head(top_n)
-            )
-            st.dataframe(
-                top_acum.style.applymap(highlight, subset=["avance_acum_%"]),
-                use_container_width=True,
-            )
+        st.dataframe(
+            leaderboard_df.style.applymap(highlight, subset=["avance_acum_%", "avance_mes_%"]),
+            use_container_width=True,
+        )
     else:
         st.info("No hay datos disponibles para calcular el rendimiento por área.")
 
 # =========================
 # Descarga a Excel
 # =========================
-buf = to_excel_download(resumen=pivot, avance=avance_series, proyeccion=proyeccion_wide, ritmo=ritmo_df)
+buf = to_excel_download(
+    resumen=round_numeric_for_reporting(pivot.copy()),
+    avance=round_numeric_for_reporting(avance_series.copy()),
+    proyeccion=proyeccion_wide,
+    ritmo=round_numeric_for_reporting(ritmo_df.copy()),
+    leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
+)
 st.download_button(
     "Descargar Excel (Resumen + Avance)",
     data=buf,
