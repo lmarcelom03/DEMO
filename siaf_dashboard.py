@@ -68,8 +68,8 @@ SEC_FUNC_MAP = {
     15: "DCEME15",
     16: "DETN16",
     18: "DCEME18",
-    19: "DCEME19"
-    20: "DETN20"
+    19: "DCEME19",
+    20: "DETN20",
     21: "DETN21",
     22: "DETN22",
 }
