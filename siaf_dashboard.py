@@ -52,8 +52,8 @@ with st.sidebar:
 # Mapeo de códigos de sec_func a nombres
 SEC_FUNC_MAP = {
     1: "0001-PI 2",
-    2: "0002-DCEME (CEAM, FP)",
-    3: "0003-DE (FT)",
+    2: "0002-DCEME",
+    3: "0003-DE",
     4: "0004-PI 1",
     5: "0005-OPP",
     6: "0006-JEFATURA",
@@ -65,13 +65,13 @@ SEC_FUNC_MAP = {
     12: "0012-OAJ",
     13: "0013-RRHH",
     14: "0014-OCI",
-    15: "0015-DCEME (EX DCC)",
-    16: "0016-DETN (EX DAMER)",
-    18: "0018-DCEME (C X ENCARGO)"
-    19: "0019-DCEME (C CORP)"
-    20: "0020-DETN (INF ESTRAT)"
-    21: "0021-DETN (EV DESEMPEÑO)",
-    22: "0022-DETN ( OPI TEC NOR)",
+    15: "0015-DCEME",
+    16: "0016-DETN",
+    18: "0018-DCEME"
+    19: "0019-DCEME"
+    20: "0020-DETN"
+    21: "0021-DETN)",
+    22: "0022-DETN",
 }
 SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
 
