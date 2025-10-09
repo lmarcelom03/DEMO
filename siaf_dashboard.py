@@ -904,85 +904,156 @@ if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_de
 
         reporte_siaf_df = reporte_siaf_df.drop(columns=["clasificador_cod", "especifica_det_desc"], errors="ignore")
 
-        if "mto_pim" in reporte_siaf_df.columns and "devengado" in reporte_siaf_df.columns:
-            reporte_siaf_df["avance_%"] = np.where(
-                reporte_siaf_df["mto_pim"] > 0,
-                reporte_siaf_df["devengado"] / reporte_siaf_df["mto_pim"] * 100.0,
+        value_sources = {
+            "AVANCE DE EJECUCIÓN ACUMULADO": "devengado",
+            "PIM": "mto_pim",
+            "CERTIFICADO": "mto_certificado",
+            "COMPROMETIDO": "mto_compro_anual",
+            "DEVENGADO": "devengado_mes",
+        }
+
+        for src in value_sources.values():
+            if src not in reporte_siaf_df.columns:
+                reporte_siaf_df[src] = 0.0
+
+        reporte_siaf_df = reporte_siaf_df[
+            reporte_siaf_df["clasificador_cod_concepto"].fillna("").astype(str).str.strip() != ""
+        ].copy()
+
+        def _label_or_default(value, fallback):
+            text = "" if pd.isna(value) else str(value).strip()
+            return text if text else fallback
+
+        def _sort_key(label):
+            text = _label_or_default(label, "")
+            code = extract_code(text)
+            if not code:
+                return (tuple(), text)
+            parts = []
+            for segment in code.split('.'):
+                try:
+                    parts.append(int(segment))
+                except ValueError:
+                    parts.append(segment)
+            return (tuple(parts), text)
+
+        def _format_hierarchy_label(level, text):
+            indent = "    " * max(level, 0)
+            prefix_map = {0: "", 1: "• ", 2: "- "}
+            prefix = prefix_map.get(level, "- ")
+            return f"{indent}{prefix}{text}".rstrip()
+
+        records = []
+        order_counter = 0
+
+        for sec_value, sec_group in reporte_siaf_df.groupby("sec_func", sort=True):
+            sec_label = _label_or_default(sec_value, "Sin sec_func")
+
+            def _sum_metric(df, source):
+                return float(df[source].fillna(0.0).sum()) if source in df.columns else 0.0
+
+            sec_metrics = {dest: _sum_metric(sec_group, src) for dest, src in value_sources.items()}
+            records.append(
+                {
+                    "nivel": 0,
+                    "orden": order_counter,
+                    "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_hierarchy_label(0, sec_label),
+                    **sec_metrics,
+                }
+            )
+            order_counter += 1
+
+            gen_groups = sorted(
+                sec_group.groupby("generica", dropna=False),
+                key=lambda kv: _sort_key(kv[0]),
+            )
+
+            for gen_value, gen_group in gen_groups:
+                gen_label = _label_or_default(gen_value, "Sin genérica")
+                gen_metrics = {dest: _sum_metric(gen_group, src) for dest, src in value_sources.items()}
+                records.append(
+                    {
+                        "nivel": 1,
+                        "orden": order_counter,
+                        "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_hierarchy_label(1, gen_label),
+                        **gen_metrics,
+                    }
+                )
+                order_counter += 1
+
+                detail_rows = sorted(
+                    gen_group.to_dict("records"),
+                    key=lambda row: _sort_key(row.get("especifica_det", "")),
+                )
+                for detail_row in detail_rows:
+                    spec_label = _label_or_default(
+                        detail_row.get("clasificador_cod_concepto", ""),
+                        "Sin específica",
+                    )
+                    if not spec_label or spec_label == "Sin específica":
+                        continue
+                    detail_metrics = {
+                        dest: float(detail_row.get(src, 0.0) or 0.0)
+                        for dest, src in value_sources.items()
+                    }
+                    records.append(
+                        {
+                            "nivel": 2,
+                            "orden": order_counter,
+                            "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_hierarchy_label(2, spec_label),
+                            **detail_metrics,
+                        }
+                    )
+                    order_counter += 1
+
+        if records:
+            reporte_siaf_df = pd.DataFrame.from_records(records)
+            reporte_siaf_df["% AVANCE DEV /PIM"] = np.where(
+                reporte_siaf_df["PIM"].astype(float) > 0,
+                reporte_siaf_df["AVANCE DE EJECUCIÓN ACUMULADO"].astype(float)
+                / reporte_siaf_df["PIM"].astype(float)
+                * 100.0,
                 0.0,
             )
-
-        pivot_source = reporte_siaf_df[
-            ["sec_func", "generica", "especifica_det", "clasificador_cod_concepto"]
-        ].copy()
-        pivot_source["sec_func"] = pivot_source["sec_func"].fillna("")
-        pivot_source["generica"] = pivot_source["generica"].fillna("")
-        pivot_source["especifica_det"] = (
-            pivot_source["especifica_det"].fillna("").astype(str).str.strip()
-        )
-        pivot_source["clasificador_cod_concepto"] = (
-            pivot_source["clasificador_cod_concepto"].fillna("").astype(str).str.strip()
-        )
-        pivot_source = pivot_source[pivot_source["especifica_det"] != ""]
-
-        if pivot_source.empty:
-            st.info(
-                "No hay específicas detalle con clasificador para el reporte por área."
+            reporte_siaf_df = (
+                reporte_siaf_df.sort_values("orden", kind="stable")
+                .drop(columns=["orden", "nivel"], errors="ignore")
             )
+            desired_order = [
+                "Centro de costo / Genérica de Gasto / Específica de Gasto",
+                "AVANCE DE EJECUCIÓN ACUMULADO",
+                "PIM",
+                "CERTIFICADO",
+                "COMPROMETIDO",
+                "DEVENGADO",
+                "% AVANCE DEV /PIM",
+            ]
+            reporte_siaf_df = reporte_siaf_df.reindex(columns=desired_order)
         else:
-            pivot_values = (
-                pivot_source.sort_values(
-                    [
-                        "sec_func",
-                        "generica",
-                        "especifica_det",
-                        "clasificador_cod_concepto",
-                    ],
-                    kind="stable",
-                )
-                .groupby(["sec_func", "generica", "especifica_det"], dropna=False)[
-                    "clasificador_cod_concepto"
+            reporte_siaf_df = pd.DataFrame(
+                columns=[
+                    "Centro de costo / Genérica de Gasto / Específica de Gasto",
+                    "AVANCE DE EJECUCIÓN ACUMULADO",
+                    "PIM",
+                    "CERTIFICADO",
+                    "COMPROMETIDO",
+                    "DEVENGADO",
+                    "% AVANCE DEV /PIM",
                 ]
-                .agg(join_unique_nonempty)
             )
 
-            if pivot_values.empty:
-                st.info(
-                    "No hay específicas detalle con clasificador para el reporte por área."
-                )
-            else:
-                pivot_table = pivot_values.unstack("especifica_det").fillna("")
-                pivot_table = pivot_table.sort_index(level=["sec_func", "generica"], sort_remaining=True)
-                pivot_table.index = pivot_table.index.set_names(["sec_func", "generica"])
+        reporte_display = round_numeric_for_reporting(reporte_siaf_df)
+        fmt_reporte = build_style_formatters(reporte_display)
+        reporte_style = reporte_display.style
+        if "% AVANCE DEV /PIM" in reporte_display.columns:
+            reporte_style = reporte_style.applymap(
+                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                subset=["% AVANCE DEV /PIM"],
+            )
+        if fmt_reporte:
+            reporte_style = reporte_style.format(fmt_reporte)
 
-                def _column_sort_key(label):
-                    code = extract_code(label)
-                    if not code:
-                        return (tuple(), str(label))
-                    parts = []
-                    for segment in code.split("."):
-                        try:
-                            parts.append(int(segment))
-                        except ValueError:
-                            parts.append(segment)
-                    return (tuple(parts), str(label))
-
-                ordered_columns = sorted(pivot_table.columns, key=_column_sort_key)
-                pivot_table = pivot_table.reindex(columns=ordered_columns)
-                pivot_table = pivot_table.loc[:, (pivot_table != "").any(axis=0)]
-                pivot_table.columns.name = "especifica_det"
-
-                pivot_table = pivot_table.reset_index()
-                pivot_table.columns = [str(col) for col in pivot_table.columns]
-
-                def _normalize_cell(value):
-                    if pd.isna(value):
-                        return ""
-                    text = str(value).strip()
-                    return "" if text.lower() in {"nan", "none", "<na>"} else text
-
-                pivot_table = pivot_table.applymap(_normalize_cell)
-
-                st.dataframe(pivot_table, use_container_width=True)
+        st.dataframe(reporte_style, use_container_width=True)
     else:
         st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
 else:
