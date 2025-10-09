@@ -185,7 +185,7 @@ def compose_email_body(template, row, meta_avance):
 # =========================
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
     """
-    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'mto_', 'pim', etc.).
+    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', 'mto_', 'devenga', 'girado').
     Retorna (sheet_name, header_row_index_pandas).
     """
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
@@ -693,7 +693,7 @@ if dev_cols and "mto_pim" in df_view.columns:
                     real_sec["tipo"] = "Real"
                     proj_sec = pd.DataFrame(proj_records)
                     frames = [real_sec[["sec_func", "mes", "monto", "tipo"]]]
-                    if not proj_sec.empty():
+                    if not proj_sec.empty:
                         frames.append(proj_sec)
                     dev_proj_sec = pd.concat(frames, ignore_index=True)
                     dev_proj_sec["monto"] = dev_proj_sec["monto"].round(2)
