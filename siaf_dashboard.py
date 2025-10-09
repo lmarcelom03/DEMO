@@ -505,86 +505,42 @@ df_f = df[mask].copy()
 df_proc = ensure_ci_ec_steps(df_f, current_month, riesgo_umbral)
 df_proc = build_classifier_columns(df_proc)
 
-# =========================
-# Resumen ejecutivo
-# =========================
-st.subheader("Resumen ejecutivo (totales)")
+# Totales globales para el resumen ejecutivo
+_tot_pia = float(df_proc.get("mto_pia", 0).sum())
+_tot_pim = float(df_proc.get("mto_pim", 0).sum())
+_tot_dev = float(df_proc.get("devengado", 0).sum())
+_tot_cert = float(df_proc.get("mto_certificado", 0).sum()) if "mto_certificado" in df_proc.columns else 0.0
+_tot_comp = float(df_proc.get("mto_compro_anual", 0).sum()) if "mto_compro_anual" in df_proc.columns else 0.0
+_saldo_pim = _tot_pim - _tot_dev if _tot_pim else 0.0
+_avance_global = (_tot_dev / _tot_pim * 100.0) if _tot_pim else 0.0
+
 dev_cols = [c for c in df_proc.columns if c.startswith("mto_devenga_")]
 
-tot_pia = float(df_proc.get("mto_pia", 0).sum())
-tot_pim = float(df_proc.get("mto_pim", 0).sum())
-tot_dev = float(df_proc.get("devengado", 0).sum())
-tot_cert = float(df_proc.get("mto_certificado", 0).sum()) if "mto_certificado" in df_proc.columns else 0.0
-tot_comp = float(df_proc.get("mto_compro_anual", 0).sum()) if "mto_compro_anual" in df_proc.columns else 0.0
-saldo_pim = tot_pim - tot_dev if tot_pim else 0.0
-avance = (tot_dev / tot_pim * 100.0) if tot_pim else 0.0
-
-k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-k1.metric("PIA", f"S/ {tot_pia:,.2f}")
-k2.metric("PIM", f"S/ {tot_pim:,.2f}")
-k3.metric("Certificado", f"S/ {tot_cert:,.2f}")
-k4.metric("Comprometido", f"S/ {tot_comp:,.2f}")
-k5.metric("Devengado (YTD)", f"S/ {tot_dev:,.2f}")
-k6.metric("Saldo PIM", f"S/ {saldo_pim:,.2f}")
-k7.metric("Avance", f"{avance:.2f}%")
-
-# =========================
-# Vistas por agrupación
-# =========================
-st.subheader("Vistas por agrupación")
-group_options = [c for c in df_proc.columns if c in [
+_group_options = [c for c in df_proc.columns if c in [
     "clasificador_cod","unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
     "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
     "producto_proyecto","activ_obra_accinv","meta","sec_func","area"
 ]]
-default_idx = group_options.index("clasificador_cod") if "clasificador_cod" in group_options else 0
-group_col = st.selectbox("Agrupar por", options=group_options, index=default_idx)
+_group_default = _group_options.index("clasificador_cod") if "clasificador_cod" in _group_options else 0
+_group_col = st.selectbox("Agrupar por", options=_group_options, index=_group_default)
+_group_values = ["(Todos)"] + sorted(df_proc[_group_col].dropna().astype(str).unique().tolist())
+_group_filter = st.selectbox(f"Filtrar {_group_col}", options=_group_values, index=0)
 
-group_vals = ["(Todos)"] + sorted(df_proc[group_col].dropna().astype(str).unique().tolist())
-group_val = st.selectbox(f"Filtrar {group_col}", options=group_vals, index=0)
-df_view = df_proc if group_val == "(Todos)" else df_proc[df_proc[group_col].astype(str) == group_val]
+df_view = df_proc if _group_filter == "(Todos)" else df_proc[df_proc[_group_col].astype(str) == _group_filter]
 
-pivot = pivot_exec(df_view, group_col, dev_cols)
-pivot_display = round_numeric_for_reporting(pivot)
-fmt_pivot = build_style_formatters(pivot_display)
-pivot_style = pivot_display.style
-if "avance_%" in pivot_display.columns:
-    pivot_style = pivot_style.applymap(
-        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-        subset=["avance_%"],
-    )
-if fmt_pivot:
-    pivot_style = pivot_style.format(fmt_pivot)
-st.dataframe(pivot_style, use_container_width=True)
+# Datos precomputados para cada apartado
+pivot = pivot_exec(df_view, _group_col, dev_cols)
 
-# =========================
-# Procesos CI–EC (detalle)
-# =========================
-st.subheader("Procesos CI–EC (monto vinculado a su cadena)")
-ci_cols = [
+_ci_cols = [
     "clasificador_cod", "clasificador_desc",
     "generica","subgenerica","subgenerica_det","especifica","especifica_det",
     "mto_pia","mto_pim","mto_certificado","mto_compro_anual",
     "devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
 ]
-ci_cols = [c for c in ci_cols if c in df_view.columns]
-df_ci = df_view[ci_cols].head(300)
-df_ci_display = round_numeric_for_reporting(df_ci)
-fmt_ci = build_style_formatters(df_ci_display)
-ci_style = df_ci_display.style
-if "avance_%" in df_ci_display.columns:
-    ci_style = ci_style.applymap(
-        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-        subset=["avance_%"],
-    )
-if fmt_ci:
-    ci_style = ci_style.format(fmt_ci)
-st.dataframe(ci_style, use_container_width=True)
+_ci_cols = [c for c in _ci_cols if c in df_view.columns]
+df_ci = df_view[_ci_cols].head(300) if _ci_cols else pd.DataFrame()
 
-# =========================
-# Consolidado por clasificador
-# =========================
-agg_cols = [
+_consol_cols = [
     c
     for c in [
         "mto_pia",
@@ -597,441 +553,543 @@ agg_cols = [
     ]
     if c in df_view.columns
 ]
-consolidado = df_view.groupby(
-    ["clasificador_cod","clasificador_desc","generica","subgenerica","subgenerica_det","especifica","especifica_det"],
-    dropna=False
-)[agg_cols].sum().reset_index()
+consolidado = pd.DataFrame()
+if _consol_cols:
+    consolidado = df_view.groupby(
+        ["clasificador_cod","clasificador_desc","generica","subgenerica","subgenerica_det","especifica","especifica_det"],
+        dropna=False
+    )[_consol_cols].sum().reset_index()
+    if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
+        consolidado["avance_%"] = np.where(
+            consolidado["mto_pim"] > 0,
+            consolidado["devengado"] / consolidado["mto_pim"] * 100.0,
+            0.0,
+        )
 
-if "mto_pim" in consolidado.columns and "devengado" in consolidado.columns:
-    consolidado["avance_%"] = np.where(consolidado["mto_pim"] > 0, consolidado["devengado"]/consolidado["mto_pim"]*100.0, 0.0)
-
-st.markdown("**Consolidado por clasificador**")
-consol_display = consolidado.head(500)
-consol_display = round_numeric_for_reporting(consol_display)
-fmt_consol = build_style_formatters(consol_display)
-consol_style = consol_display.style
-if "avance_%" in consol_display.columns:
-    consol_style = consol_style.applymap(
-        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-        subset=["avance_%"],
-    )
-if fmt_consol:
-    consol_style = consol_style.format(fmt_consol)
-st.dataframe(consol_style, use_container_width=True)
-
-# =========================
-# Serie mensual interactiva
-# =========================
 avance_series = pd.DataFrame()
-proyeccion_wide = pd.DataFrame()
 if dev_cols and "mto_pim" in df_view.columns:
-    st.subheader("Avance mensual interactivo")
     month_map = {f"mto_devenga_{i:02d}": i for i in range(1, 13)}
     dev_series = df_view[dev_cols].sum().reset_index()
-    dev_series.columns = ["col", "monto"]
+    dev_series.columns = ["col", "devengado"]
     dev_series["mes"] = dev_series["col"].map(month_map)
-    dev_series = dev_series.sort_values("mes")
+    dev_series = dev_series.dropna(subset=["mes"]).sort_values("mes")
     pim_total = df_view["mto_pim"].sum()
-    dev_series["contrib_pct"] = np.where(pim_total > 0, dev_series["monto"] / pim_total * 100.0, 0.0)
-    dev_series["riesgo"] = dev_series["contrib_pct"] < float(riesgo_umbral)
-    dev_series["monto"] = dev_series["monto"].round(2)
-    dev_series["contrib_pct"] = dev_series["contrib_pct"].round(2)
-    avance_series = dev_series[["mes", "monto", "contrib_pct"]]
-    chart = (
-        alt.Chart(dev_series)
-        .mark_bar()
-        .encode(
-            x=alt.X("mes:O", title="Mes"),
-            y=alt.Y("contrib_pct:Q", title="% contribución", axis=alt.Axis(format=".2f")),
-            color=alt.condition(alt.datum.riesgo, alt.value("#ff6961"), alt.value("#1f77b4")),
-            tooltip=[
-                "mes",
-                alt.Tooltip("monto", title="Devengado", format=",.2f"),
-                alt.Tooltip("contrib_pct", title="Contrib. %", format=".2f"),
-            ],
-        )
-        .properties(width=520, height=220)
+    dev_series["devengado"] = dev_series["devengado"].fillna(0.0)
+    dev_series["acumulado"] = dev_series["devengado"].cumsum()
+    dev_series["%_acumulado"] = np.where(
+        pim_total > 0,
+        dev_series["acumulado"] / pim_total * 100.0,
+        0.0,
     )
-    st.altair_chart(chart, use_container_width=False)
-    avance_series_display = avance_series.rename(columns={"contrib_pct": "contrib_%"})
-    avance_series_display = round_numeric_for_reporting(avance_series_display)
-    fmt_avance = build_style_formatters(avance_series_display)
-    avance_style = avance_series_display.style.applymap(
-        lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-        subset=["contrib_%"],
-    )
-    if fmt_avance:
-        avance_style = avance_style.format(fmt_avance)
-    st.dataframe(avance_style, use_container_width=True)
+    dev_series["%_acumulado"] = dev_series["%_acumulado"].round(2)
+    avance_series = dev_series[["mes", "devengado", "%_acumulado"]]
 
-    if current_month < 12 and pim_total > 0:
-        st.subheader("Proyección de ejecución por área (95% confianza)")
-        if "sec_func" not in df_view.columns:
-            st.info("Agrega la columna sec_func para proyectar la ejecución por área.")
-        else:
-            dev_sec = df_view.groupby("sec_func")[dev_cols].sum().reset_index()
-            dev_sec_long = dev_sec.melt(id_vars="sec_func", var_name="col", value_name="monto")
-            dev_sec_long["mes"] = dev_sec_long["col"].map({f"mto_devenga_{i:02d}": i for i in range(1, 13)})
-            dev_sec_long = dev_sec_long.dropna(subset=["mes"])
-            if dev_sec_long.empty:
-                st.info("No hay datos históricos suficientes para proyectar la ejecución por área.")
-            else:
-                real_sec = dev_sec_long[dev_sec_long["mes"] <= current_month].copy()
-                real_sec["sec_func"] = real_sec["sec_func"].astype(str)
-                if real_sec.empty:
-                    st.info("No hay registros devengados en los meses analizados para generar la proyección.")
-                else:
-                    remaining_months = max(12 - current_month, 0)
-                    unique_areas = sorted(df_view["sec_func"].dropna().astype(str).unique().tolist())
-                    stats = real_sec.groupby("sec_func")["monto"].agg(["count", "mean", "std"])
-                    stats = stats.reindex(unique_areas).fillna(0.0)
-                    stats.rename(columns={"count": "n", "mean": "mean", "std": "std"}, inplace=True)
-                    stats["per_mes_proj"] = stats.apply(
-                        lambda row: max(
-                            row["mean"] - Z_SCORE_95 * (row["std"] / np.sqrt(row["n"])) if row["n"] > 0 else 0.0,
-                            0.0,
-                        ),
-                        axis=1,
-                    )
-                    proj_records = []
-                    if remaining_months > 0:
-                        for sec, per_month in stats["per_mes_proj"].items():
-                            for m in range(current_month + 1, 13):
-                                proj_records.append(
-                                    {
-                                        "sec_func": sec,
-                                        "mes": m,
-                                        "monto": max(per_month, 0.0),
-                                        "tipo": "Proyectado",
-                                    }
-                                )
-                    real_sec["tipo"] = "Real"
-                    proj_sec = pd.DataFrame(proj_records)
-                    frames = [real_sec[["sec_func", "mes", "monto", "tipo"]]]
-                    if not proj_sec.empty:
-                        frames.append(proj_sec)
-                    dev_proj_sec = pd.concat(frames, ignore_index=True)
-                    dev_proj_sec["monto"] = dev_proj_sec["monto"].round(2)
-
-                    chart_proj = (
-                        alt.Chart(dev_proj_sec)
-                        .mark_bar()
-                        .encode(
-                            x=alt.X("mes:O", title="Mes"),
-                            y=alt.Y("monto:Q", title="Devengado", axis=alt.Axis(format=",.2f")),
-                            color=alt.Color("sec_func:N", title="Área"),
-                            column=alt.Column("tipo:N", title=""),
-                            tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",.2f")],
-                        )
-                        .properties(width=160, height=240)
-                    )
-                    st.altair_chart(chart_proj, use_container_width=True)
-
-                    proyeccion_wide = (
-                        dev_proj_sec.pivot_table(index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0)
-                        .sort_index(axis=1)
-                        .reset_index()
-                    )
-                    proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
-                    proyeccion_wide = round_numeric_for_reporting(proyeccion_wide)
-
-                    pim_sec = df_view.groupby("sec_func")["mto_pim"].sum().reindex(unique_areas, fill_value=0.0)
-                    real_totals = real_sec.groupby("sec_func")["monto"].sum().reindex(unique_areas, fill_value=0.0)
-                    proyectado_futuro = stats["per_mes_proj"] * remaining_months
-                    total_estimado = real_totals + proyectado_futuro
-                    avance_estimado = np.where(pim_sec > 0, total_estimado / pim_sec * 100.0, 0.0)
-
-                    proyeccion_resumen = pd.DataFrame(
-                        {
-                            "sec_func": unique_areas,
-                            "devengado_real": real_totals.values,
-                            "proyeccion_futura": proyectado_futuro.values,
-                            "total_estimado": total_estimado.values,
-                            "mto_pim": pim_sec.values,
-                            "avance_estimado_%": avance_estimado,
-                        }
-                    )
-                    proyeccion_resumen = round_numeric_for_reporting(proyeccion_resumen)
-                    fmt_proj = build_style_formatters(proyeccion_resumen)
-                    resumen_style = proyeccion_resumen.style
-                    if "avance_estimado_%" in proyeccion_resumen.columns:
-                        resumen_style = resumen_style.applymap(
-                            lambda v: "background-color: #ffcccc" if v < float(meta_avance) else "",
-                            subset=["avance_estimado_%"],
-                        )
-                    if fmt_proj:
-                        resumen_style = resumen_style.format(fmt_proj)
-                    st.dataframe(resumen_style, use_container_width=True)
-
-# =========================
-# Ritmo requerido por proceso
-# =========================
 ritmo_df = pd.DataFrame()
 leaderboard_df = pd.DataFrame()
-if "mto_pim" in df_view.columns:
-    st.subheader("Ritmo requerido por proceso")
-    remaining_months = max(12 - current_month, 1)
-    pim_total = df_view["mto_pim"].sum()
-    processes = []
-    for col, label in [("mto_certificado", "Certificar"), ("mto_compro_anual", "Comprometer"), ("devengado", "Devengar")]:
-        total = df_view.get(col, pd.Series(dtype=float)).sum()
-        actual_avg = total / current_month
-        needed = max(pim_total - total, 0)
-        required_avg = needed / remaining_months
-        processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
-    ritmo_df = pd.DataFrame(processes)
-    ritmo_df = round_numeric_for_reporting(ritmo_df)
-    ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
-    chart_ritmo = (
-        alt.Chart(ritmo_melt)
-        .mark_bar()
-        .encode(
-            x=alt.X("Proceso:N"),
-            y=alt.Y("Monto:Q", axis=alt.Axis(format=",.2f")),
-            color="Tipo:N",
-            tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
-        )
-        .properties(width=600, height=300)
-    )
-    st.altair_chart(chart_ritmo, use_container_width=False)
-
-# =========================
-# Top sec_func con menor avance (leaderboard)
-# =========================
-if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
-    st.subheader("Top áreas con menor avance")
-    agg_cols = ["mto_pim", "devengado", "devengado_mes"]
-    if "mto_certificado" in df_view.columns:
-        agg_cols.insert(1, "mto_certificado")
-    agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
-    if not agg_sec.empty:
-        agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
-        agg_sec["avance_mes_%"] = np.where(
-            agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0
-        )
-        agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
-        agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
-
-        max_top = int(agg_sec.shape[0])
-        top_default = 5 if max_top >= 5 else max_top
-        top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top, value=top_default)
-
-        leaderboard_df = (
-            agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
-            .head(top_n)
-            .copy()
-        )
-        display_cols = [
-            "rank_acum",
-            "rank_mes",
-            "sec_func",
-            "mto_pim",
-        ]
-        if "mto_certificado" in agg_sec.columns:
-            display_cols.append("mto_certificado")
-        display_cols.extend([
-            "devengado",
-            "avance_acum_%",
-            "devengado_mes",
-            "avance_mes_%",
-        ])
-        leaderboard_df = leaderboard_df[display_cols]
-
-        leaderboard_display = round_numeric_for_reporting(leaderboard_df)
-        fmt_leader = build_style_formatters(leaderboard_display)
-        highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
-        leader_style = leaderboard_display.style.applymap(
-            highlight,
-            subset=["avance_acum_%", "avance_mes_%"],
-        )
-        if fmt_leader:
-            leader_style = leader_style.format(fmt_leader)
-        st.dataframe(leader_style, use_container_width=True)
-    else:
-        st.info("No hay datos disponibles para calcular el rendimiento por área.")
-
-# =========================
-# Reporte SIAF por área y clasificadores
-# =========================
+alert_df = pd.DataFrame()
 reporte_siaf_df = pd.DataFrame()
-if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
-    st.subheader("Reporte SIAF por área, genérica y específica detalle")
-    siaf_agg_cols = [
-        c
-        for c in [
-            "mto_pia",
-            "mto_pim",
-            "mto_certificado",
-            "mto_compro_anual",
-            "devengado_mes",
-            "devengado",
-            "saldo_pim",
-        ]
-        if c in df_view.columns
-    ]
+proyeccion_wide = pd.DataFrame()
 
-    if siaf_agg_cols:
-        base_group = ["sec_func", "generica", "especifica_det"]
-        agg_map = {col: "sum" for col in siaf_agg_cols}
-        if "clasificador_cod" in df_view.columns:
-            agg_map["clasificador_cod"] = "first"
-        if "especifica_det_desc" in df_view.columns:
-            agg_map["especifica_det_desc"] = "first"
+# Navegación por apartados
+(
+    tab_resumen,
+    tab_agrup,
+    tab_ci,
+    tab_consol,
+    tab_avance,
+    tab_gestion,
+    tab_reporte,
+    tab_descarga,
+) = st.tabs([
+    "Resumen ejecutivo",
+    "Agrupaciones",
+    "Procesos CI–EC",
+    "Consolidado",
+    "Avance mensual",
+    "Ritmo y alertas",
+    "Reporte SIAF",
+    "Descargas",
+])
 
-        reporte_siaf_df = (
-            df_view.groupby(base_group, dropna=False)
-            .agg(agg_map)
-            .reset_index()
+with tab_resumen:
+    st.header("Resumen ejecutivo (totales)")
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+    k1.metric("PIA", f"S/ {_tot_pia:,.2f}")
+    k2.metric("PIM", f"S/ {_tot_pim:,.2f}")
+    k3.metric("Certificado", f"S/ {_tot_cert:,.2f}")
+    k4.metric("Comprometido", f"S/ {_tot_comp:,.2f}")
+    k5.metric("Devengado (YTD)", f"S/ {_tot_dev:,.2f}")
+    k6.metric("Saldo PIM", f"S/ {_saldo_pim:,.2f}")
+    k7.metric("Avance", f"{_avance_global:.2f}%")
+
+with tab_agrup:
+    st.header("Vistas por agrupación")
+    pivot_display = round_numeric_for_reporting(pivot)
+    fmt_pivot = build_style_formatters(pivot_display)
+    pivot_style = pivot_display.style
+    if "avance_%" in pivot_display.columns:
+        pivot_style = pivot_style.applymap(
+            lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+            subset=["avance_%"],
+        )
+    if fmt_pivot:
+        pivot_style = pivot_style.format(fmt_pivot)
+    st.dataframe(pivot_style, use_container_width=True)
+
+with tab_ci:
+    st.header("Procesos CI–EC (monto vinculado a su cadena)")
+    if df_ci.empty:
+        st.info("No hay datos disponibles para esta vista.")
+    else:
+        df_ci_display = round_numeric_for_reporting(df_ci)
+        fmt_ci = build_style_formatters(df_ci_display)
+        ci_style = df_ci_display.style
+        if "avance_%" in df_ci_display.columns:
+            ci_style = ci_style.applymap(
+                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                subset=["avance_%"],
+            )
+        if fmt_ci:
+            ci_style = ci_style.format(fmt_ci)
+        st.dataframe(ci_style, use_container_width=True)
+
+with tab_consol:
+    st.header("Consolidado por clasificador")
+    if consolidado.empty:
+        st.info("No hay información consolidada para mostrar.")
+    else:
+        consol_display = round_numeric_for_reporting(consolidado.head(500))
+        fmt_consol = build_style_formatters(consol_display)
+        consol_style = consol_display.style
+        if "avance_%" in consol_display.columns:
+            consol_style = consol_style.applymap(
+                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                subset=["avance_%"],
+            )
+        if fmt_consol:
+            consol_style = consol_style.format(fmt_consol)
+        st.dataframe(consol_style, use_container_width=True)
+
+with tab_avance:
+    st.header("Avance mensual interactivo")
+    if avance_series.empty:
+        st.info("No hay información de devengado mensual para graficar.")
+    else:
+        avance_display = avance_series.copy()
+        bar = (
+            alt.Chart(avance_display)
+            .mark_bar(color="#1f77b4")
+            .encode(
+                x=alt.X("mes:O", title="Mes"),
+                y=alt.Y("devengado:Q", title="Devengado", axis=alt.Axis(format=",.2f")),
+                tooltip=[
+                    alt.Tooltip("mes", title="Mes"),
+                    alt.Tooltip("devengado", title="Devengado", format=",.2f"),
+                    alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
+                ],
+            )
+        )
+        line = (
+            alt.Chart(avance_display)
+            .mark_line(color="#ff7f0e", point=True)
+            .encode(
+                x=alt.X("mes:O", title="Mes"),
+                y=alt.Y("%_acumulado:Q", title="% acumulado", axis=alt.Axis(format=".2f")),
+                tooltip=[
+                    alt.Tooltip("mes", title="Mes"),
+                    alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
+                ],
+            )
+        )
+        chart = alt.layer(bar, line).resolve_scale(y="independent").properties(width=520, height=260)
+        st.altair_chart(chart, use_container_width=False)
+
+        avance_table = round_numeric_for_reporting(avance_display)
+        fmt_avance = build_style_formatters(avance_table)
+        avance_style = avance_table.style
+        if "%_acumulado" in avance_table.columns:
+            avance_style = avance_style.applymap(
+                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                subset=["%_acumulado"],
+            )
+        if fmt_avance:
+            avance_style = avance_style.format(fmt_avance)
+        st.dataframe(avance_style, use_container_width=True)
+
+with tab_gestion:
+    st.header("Ritmo requerido por proceso")
+    if "mto_pim" not in df_view.columns:
+        st.info("Se requiere la columna mto_pim para calcular el ritmo requerido.")
+    else:
+        remaining_months = max(12 - current_month, 1)
+        pim_total = df_view["mto_pim"].sum()
+        processes = []
+        for col, label in [("mto_certificado", "Certificar"), ("mto_compro_anual", "Comprometer"), ("devengado", "Devengar")]:
+            total = df_view.get(col, pd.Series(dtype=float)).sum()
+            actual_avg = total / max(current_month, 1)
+            needed = max(pim_total - total, 0)
+            required_avg = needed / remaining_months
+            processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
+        ritmo_df = pd.DataFrame(processes)
+        ritmo_df = round_numeric_for_reporting(ritmo_df)
+        ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
+        chart_ritmo = (
+            alt.Chart(ritmo_melt)
+            .mark_bar()
+            .encode(
+                x=alt.X("Proceso:N"),
+                y=alt.Y("Monto:Q", axis=alt.Axis(format=",.2f")),
+                color="Tipo:N",
+                tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
+            )
+            .properties(width=600, height=300)
+        )
+        st.altair_chart(chart_ritmo, use_container_width=False)
+
+    st.header("Top áreas con menor avance")
+    if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
+        agg_cols = ["mto_pim", "devengado", "devengado_mes"]
+        if "mto_certificado" in df_view.columns:
+            agg_cols.insert(1, "mto_certificado")
+        agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
+        if not agg_sec.empty:
+            agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
+            agg_sec["avance_mes_%"] = np.where(
+                agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0
+            )
+            agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
+            agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
+
+            max_top = int(agg_sec.shape[0])
+            top_default = 5 if max_top >= 5 else max_top
+            top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top, value=top_default)
+
+            leaderboard_df = (
+                agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
+                .head(top_n)
+                .copy()
+            )
+            display_cols = [
+                "rank_acum",
+                "rank_mes",
+                "sec_func",
+                "mto_pim",
+            ]
+            if "mto_certificado" in agg_sec.columns:
+                display_cols.append("mto_certificado")
+            display_cols.extend([
+                "devengado",
+                "avance_acum_%",
+                "devengado_mes",
+                "avance_mes_%",
+            ])
+            leaderboard_df = leaderboard_df[display_cols]
+
+            leaderboard_display = round_numeric_for_reporting(leaderboard_df)
+            fmt_leader = build_style_formatters(leaderboard_display)
+            highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
+            leader_style = leaderboard_display.style.applymap(
+                highlight,
+                subset=["avance_acum_%", "avance_mes_%"],
+            )
+            if fmt_leader:
+                leader_style = leader_style.format(fmt_leader)
+            st.dataframe(leader_style, use_container_width=True)
+    else:
+        st.info("Se requieren las columnas sec_func y mto_pim para construir el ranking.")
+
+    st.header("Automatización de alertas por correo")
+    if "alert_contacts" not in st.session_state:
+        st.session_state["alert_contacts"] = {}
+    if "email_subject" not in st.session_state:
+        st.session_state["email_subject"] = f"Alerta de avance presupuestal - Mes {int(current_month):02d}"
+    if "email_body_template" not in st.session_state:
+        st.session_state["email_body_template"] = (
+            "Estimado equipo {area},\n\n"
+            "El avance acumulado registra {avance_acum:.2f}% y el avance del mes es {avance_mes:.2f}%.\n"
+            "PIM: S/ {pim:,.2f}\n"
+            "Devengado acumulado: S/ {devengado:,.2f}\n"
+            "Devengado del mes: S/ {devengado_mes:,.2f}\n\n"
+            "La meta institucional vigente es {meta:.0f}%. Por favor revisen las acciones necesarias para mejorar la ejecución.\n\n"
+            "Saludos,\n"
+            "Equipo de Presupuesto"
         )
 
-        if "clasificador_cod" in reporte_siaf_df.columns:
-            clasificador_cod = reporte_siaf_df["clasificador_cod"].fillna("").astype(str).str.strip()
-        else:
-            clasificador_cod = reporte_siaf_df["especifica_det"].map(extract_code).fillna("").astype(str).str.strip()
+    if not leaderboard_df.empty:
+        mask_acum = leaderboard_df.get("avance_acum_%", pd.Series(dtype=float)) < float(riesgo_umbral)
+        mask_mes = leaderboard_df.get("avance_mes_%", pd.Series(dtype=float)) < float(riesgo_umbral)
+        risk_mask = (mask_acum.fillna(False)) | (mask_mes.fillna(False))
+        if risk_mask.any():
+            alert_df = leaderboard_df.loc[risk_mask].copy()
 
-        if "especifica_det_desc" in reporte_siaf_df.columns:
-            concepto = reporte_siaf_df["especifica_det_desc"].fillna("").astype(str).str.strip()
-        else:
-            concepto = reporte_siaf_df["especifica_det"].map(desc_only).fillna("").astype(str).str.strip()
+    if alert_df.empty:
+        st.info("No hay áreas con avance por debajo del umbral definido. Ajusta los filtros o el umbral para generar alertas.")
+    else:
+        alert_display = round_numeric_for_reporting(alert_df.copy())
+        fmt_alert = build_style_formatters(alert_display)
+        highlight_alert = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
+        alert_style = alert_display.style.applymap(
+            highlight_alert,
+            subset=[c for c in ["avance_acum_%", "avance_mes_%"] if c in alert_display.columns],
+        )
+        if fmt_alert:
+            alert_style = alert_style.format(fmt_alert)
+        st.dataframe(alert_style, use_container_width=True)
 
-        tiene_cod = (clasificador_cod != "") & (clasificador_cod != "nan")
-        tiene_concepto = (concepto != "") & (concepto != "nan")
-        reporte_siaf_df["clasificador_cod_concepto"] = np.where(
-            tiene_cod & tiene_concepto,
-            clasificador_cod + " - " + concepto,
-            np.where(tiene_concepto, concepto, clasificador_cod),
+        alert_areas = sorted(alert_df["sec_func"].astype(str).unique())
+        for area in alert_areas:
+            st.session_state["alert_contacts"].setdefault(area, "")
+
+        st.markdown("### Contactos por área en riesgo")
+        contact_df = pd.DataFrame(
+            {
+                "Área": alert_areas,
+                "Correo": [st.session_state["alert_contacts"].get(area, "") for area in alert_areas],
+            }
+        )
+        edited_contacts = st.data_editor(
+            contact_df,
+            key="alert_contacts_editor",
+            num_rows="fixed",
+            use_container_width=True,
+        )
+        if st.button("Guardar contactos", key="save_contacts"):
+            updated_contacts = {}
+            for area, email in zip(alert_areas, edited_contacts["Correo"].tolist()):
+                if isinstance(email, str):
+                    clean_email = email.strip()
+                elif pd.notna(email):
+                    clean_email = str(email).strip()
+                else:
+                    clean_email = ""
+                if clean_email:
+                    updated_contacts[area] = clean_email
+            st.session_state["alert_contacts"] = updated_contacts
+            st.success("Contactos actualizados correctamente.")
+
+        missing_contacts = [area for area in alert_areas if not st.session_state["alert_contacts"].get(area)]
+        if missing_contacts:
+            st.info("Faltan correos para: " + ", ".join(missing_contacts))
+
+        st.markdown("### Configurar envío de correos")
+        sender_email = st.text_input("Cuenta Outlook (remitente)")
+        app_password = st.text_input("Contraseña o app password de Outlook", type="password")
+        smtp_server = st.text_input("Servidor SMTP", value="smtp.office365.com")
+        smtp_port = st.number_input("Puerto SMTP", min_value=1, max_value=65535, value=587, step=1)
+
+        subject = st.text_input("Asunto del correo", key="email_subject")
+        body_template = st.text_area(
+            "Plantilla del mensaje (usa llaves para reemplazos como {area}, {avance_acum}, {avance_mes}, {pim})",
+            key="email_body_template",
+            height=220,
         )
 
-        reporte_siaf_df = reporte_siaf_df.drop(columns=["clasificador_cod", "especifica_det_desc"], errors="ignore")
+        preview_area = st.selectbox("Vista previa del mensaje", alert_areas, key="preview_area")
+        if preview_area:
+            preview_row = alert_df[alert_df["sec_func"].astype(str) == preview_area].iloc[0]
+            preview_body = compose_email_body(body_template, preview_row, meta_avance)
+            st.code(preview_body)
 
-        value_sources = {
-            "AVANCE DE EJECUCIÓN ACUMULADO": "devengado",
-            "PIM": "mto_pim",
-            "CERTIFICADO": "mto_certificado",
-            "COMPROMETIDO": "mto_compro_anual",
-            "DEVENGADO": "devengado_mes",
-        }
-
-        for src in value_sources.values():
-            if src not in reporte_siaf_df.columns:
-                reporte_siaf_df[src] = 0.0
-
-        reporte_siaf_df = reporte_siaf_df[
-            reporte_siaf_df["clasificador_cod_concepto"].fillna("").astype(str).str.strip() != ""
-        ].copy()
-
-        def _label_or_default(value, fallback):
-            text = "" if pd.isna(value) else str(value).strip()
-            return text if text else fallback
-
-        def _sort_key(label):
-            text = _label_or_default(label, "")
-            code = extract_code(text)
-            if not code:
-                return (tuple(), text)
-            parts = []
-            for segment in code.split('.'):
-                try:
-                    parts.append(int(segment))
-                except ValueError:
-                    parts.append(segment)
-            return (tuple(parts), text)
-
-        def _format_hierarchy_label(level, text):
-            indent = "    " * max(level, 0)
-            prefix_map = {0: "", 1: "• ", 2: "- "}
-            prefix = prefix_map.get(level, "- ")
-            return f"{indent}{prefix}{text}".rstrip()
-
-        records = []
-        order_counter = 0
-
-        for sec_value, sec_group in reporte_siaf_df.groupby("sec_func", sort=True):
-            sec_label = _label_or_default(sec_value, "Sin sec_func")
-
-            def _sum_metric(df, source):
-                return float(df[source].fillna(0.0).sum()) if source in df.columns else 0.0
-
-            sec_metrics = {dest: _sum_metric(sec_group, src) for dest, src in value_sources.items()}
-            records.append(
-                {
-                    "nivel": 0,
-                    "orden": order_counter,
-                    "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_hierarchy_label(0, sec_label),
-                    **sec_metrics,
+        if st.button("Enviar correos de alerta", key="send_alerts"):
+            if not sender_email or not app_password:
+                st.error("Debes ingresar la cuenta y la contraseña o app password de Outlook.")
+            else:
+                active_contacts = {
+                    area: email.strip()
+                    for area, email in st.session_state["alert_contacts"].items()
+                    if isinstance(email, str) and email.strip()
                 }
-            )
-            order_counter += 1
+                if not active_contacts:
+                    st.warning("No hay correos configurados para las áreas en riesgo.")
+                else:
+                    messages = []
+                    for area, recipient in active_contacts.items():
+                        row_match = alert_df[alert_df["sec_func"].astype(str) == area]
+                        if row_match.empty:
+                            continue
+                        row = row_match.iloc[0]
+                        body = compose_email_body(body_template, row, meta_avance)
+                        msg = EmailMessage()
+                        msg["Subject"] = subject
+                        msg["From"] = sender_email
+                        msg["To"] = recipient
+                        msg.set_content(body)
+                        messages.append(msg)
+                    if not messages:
+                        st.warning("No se generaron mensajes para enviar.")
+                    else:
+                        try:
+                            with smtplib.SMTP(smtp_server, int(smtp_port)) as smtp:
+                                smtp.starttls()
+                                smtp.login(sender_email, app_password)
+                                for msg in messages:
+                                    smtp.send_message(msg)
+                            st.success(f"Se enviaron {len(messages)} alerta(s) correctamente.")
+                        except Exception as exc:
+                            st.error(f"No se pudieron enviar los correos: {exc}")
 
-            gen_groups = sorted(
-                sec_group.groupby("generica", dropna=False),
-                key=lambda kv: _sort_key(kv[0]),
+with tab_reporte:
+    st.header("Reporte SIAF por área, genérica y específica detalle")
+    if not all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
+        st.info("Para el reporte SIAF se requieren las columnas sec_func, generica y especifica_det.")
+    else:
+        siaf_agg_cols = [
+            c
+            for c in [
+                "mto_pia",
+                "mto_pim",
+                "mto_certificado",
+                "mto_compro_anual",
+                "devengado_mes",
+                "devengado",
+                "saldo_pim",
+            ]
+            if c in df_view.columns
+        ]
+
+        if not siaf_agg_cols:
+            st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
+        else:
+            base_group = ["sec_func", "generica", "especifica_det"]
+            agg_map = {col: "sum" for col in siaf_agg_cols}
+            if "clasificador_cod" in df_view.columns:
+                agg_map["clasificador_cod"] = "first"
+            if "especifica_det_desc" in df_view.columns:
+                agg_map["especifica_det_desc"] = "first"
+
+            reporte_base = (
+                df_view.groupby(base_group, dropna=False)
+                .agg(agg_map)
+                .reset_index()
             )
 
-            for gen_value, gen_group in gen_groups:
-                gen_label = _label_or_default(gen_value, "Sin genérica")
-                gen_metrics = {dest: _sum_metric(gen_group, src) for dest, src in value_sources.items()}
+            if "clasificador_cod" in reporte_base.columns:
+                clasificador_cod = reporte_base["clasificador_cod"].fillna("").astype(str).str.strip()
+            else:
+                clasificador_cod = reporte_base["especifica_det"].map(extract_code).fillna("").astype(str).str.strip()
+
+            if "especifica_det_desc" in reporte_base.columns:
+                concepto = reporte_base["especifica_det_desc"].fillna("").astype(str).str.strip()
+            else:
+                concepto = reporte_base["especifica_det"].map(desc_only).fillna("").astype(str).str.strip()
+
+            tiene_cod = (clasificador_cod != "") & (clasificador_cod != "nan")
+            tiene_concepto = (concepto != "") & (concepto != "nan")
+            reporte_base["clasificador_cod_concepto"] = np.where(
+                tiene_cod & tiene_concepto,
+                clasificador_cod + " - " + concepto,
+                np.where(tiene_concepto, concepto, clasificador_cod),
+            )
+
+            value_sources = {
+                "AVANCE DE EJECUCIÓN ACUMULADO": "devengado",
+                "PIM": "mto_pim",
+                "CERTIFICADO": "mto_certificado",
+                "COMPROMETIDO": "mto_compro_anual",
+                "DEVENGADO": "devengado_mes",
+            }
+            for src in value_sources.values():
+                if src not in reporte_base.columns:
+                    reporte_base[src] = 0.0
+
+            reporte_base = reporte_base[
+                reporte_base["clasificador_cod_concepto"].fillna("").astype(str).str.strip() != ""
+            ].copy()
+
+            def _label_or_default(value, fallback):
+                text = "" if pd.isna(value) else str(value).strip()
+                return text if text else fallback
+
+            def _sort_key(label):
+                text = _label_or_default(label, "")
+                code = extract_code(text)
+                if not code:
+                    return (tuple(), text)
+                parts = []
+                for segment in code.split('.'):
+                    try:
+                        parts.append(int(segment))
+                    except ValueError:
+                        parts.append(segment)
+                return (tuple(parts), text)
+
+            def _format_label(level, text):
+                indent = "    " * max(level, 0)
+                prefix_map = {0: "", 1: "• ", 2: "- "}
+                return f"{indent}{prefix_map.get(level, '- ')}{text}".rstrip()
+
+            records = []
+            order_counter = 0
+
+            for sec_value, sec_group in reporte_base.groupby("sec_func", sort=True):
+                sec_label = _label_or_default(sec_value, "Sin sec_func")
+
+                def _sum_metric(frame, source):
+                    return float(frame[source].fillna(0.0).sum()) if source in frame.columns else 0.0
+
+                sec_metrics = {dest: _sum_metric(sec_group, src) for dest, src in value_sources.items()}
                 records.append(
                     {
-                        "nivel": 1,
+                        "nivel": 0,
                         "orden": order_counter,
-                        "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_hierarchy_label(1, gen_label),
-                        **gen_metrics,
+                        "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_label(0, sec_label),
+                        **sec_metrics,
                     }
                 )
                 order_counter += 1
 
-                detail_rows = sorted(
-                    gen_group.to_dict("records"),
-                    key=lambda row: _sort_key(row.get("especifica_det", "")),
+                gen_groups = sorted(
+                    sec_group.groupby("generica", dropna=False),
+                    key=lambda kv: _sort_key(kv[0]),
                 )
-                for detail_row in detail_rows:
-                    spec_label = _label_or_default(
-                        detail_row.get("clasificador_cod_concepto", ""),
-                        "Sin específica",
-                    )
-                    if not spec_label or spec_label == "Sin específica":
-                        continue
-                    detail_metrics = {
-                        dest: float(detail_row.get(src, 0.0) or 0.0)
-                        for dest, src in value_sources.items()
-                    }
+
+                for gen_value, gen_group in gen_groups:
+                    gen_label = _label_or_default(gen_value, "Sin genérica")
+                    gen_metrics = {dest: _sum_metric(gen_group, src) for dest, src in value_sources.items()}
                     records.append(
                         {
-                            "nivel": 2,
+                            "nivel": 1,
                             "orden": order_counter,
-                            "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_hierarchy_label(2, spec_label),
-                            **detail_metrics,
+                            "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_label(1, gen_label),
+                            **gen_metrics,
                         }
                     )
                     order_counter += 1
 
-        if records:
-            reporte_siaf_df = pd.DataFrame.from_records(records)
-            reporte_siaf_df["% AVANCE DEV /PIM"] = np.where(
-                reporte_siaf_df["PIM"].astype(float) > 0,
-                reporte_siaf_df["AVANCE DE EJECUCIÓN ACUMULADO"].astype(float)
-                / reporte_siaf_df["PIM"].astype(float)
-                * 100.0,
-                0.0,
-            )
-            reporte_siaf_df = (
-                reporte_siaf_df.sort_values("orden", kind="stable")
-                .drop(columns=["orden", "nivel"], errors="ignore")
-            )
-            desired_order = [
-                "Centro de costo / Genérica de Gasto / Específica de Gasto",
-                "AVANCE DE EJECUCIÓN ACUMULADO",
-                "PIM",
-                "CERTIFICADO",
-                "COMPROMETIDO",
-                "DEVENGADO",
-                "% AVANCE DEV /PIM",
-            ]
-            reporte_siaf_df = reporte_siaf_df.reindex(columns=desired_order)
-        else:
-            reporte_siaf_df = pd.DataFrame(
-                columns=[
+                    detail_rows = sorted(
+                        gen_group.to_dict("records"),
+                        key=lambda row: _sort_key(row.get("especifica_det", "")),
+                    )
+                    for detail_row in detail_rows:
+                        spec_label = _label_or_default(detail_row.get("clasificador_cod_concepto", ""), "Sin específica")
+                        if not spec_label or spec_label == "Sin específica":
+                            continue
+                        detail_metrics = {
+                            dest: float(detail_row.get(src, 0.0) or 0.0)
+                            for dest, src in value_sources.items()
+                        }
+                        records.append(
+                            {
+                                "nivel": 2,
+                                "orden": order_counter,
+                                "Centro de costo / Genérica de Gasto / Específica de Gasto": _format_label(2, spec_label),
+                                **detail_metrics,
+                            }
+                        )
+                        order_counter += 1
+
+            if records:
+                reporte_siaf_df = pd.DataFrame.from_records(records)
+                reporte_siaf_df["% AVANCE DEV /PIM"] = np.where(
+                    reporte_siaf_df["PIM"].astype(float) > 0,
+                    reporte_siaf_df["AVANCE DE EJECUCIÓN ACUMULADO"].astype(float) / reporte_siaf_df["PIM"].astype(float) * 100.0,
+                    0.0,
+                )
+                reporte_siaf_df = (
+                    reporte_siaf_df.sort_values("orden", kind="stable")
+                    .drop(columns=["orden", "nivel"], errors="ignore")
+                )
+                reporte_siaf_df = reporte_siaf_df[[
                     "Centro de costo / Genérica de Gasto / Específica de Gasto",
                     "AVANCE DE EJECUCIÓN ACUMULADO",
                     "PIM",
@@ -1039,181 +1097,45 @@ if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_de
                     "COMPROMETIDO",
                     "DEVENGADO",
                     "% AVANCE DEV /PIM",
-                ]
-            )
-
-        reporte_display = round_numeric_for_reporting(reporte_siaf_df)
-        fmt_reporte = build_style_formatters(reporte_display)
-        reporte_style = reporte_display.style
-        if "% AVANCE DEV /PIM" in reporte_display.columns:
-            reporte_style = reporte_style.applymap(
-                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=["% AVANCE DEV /PIM"],
-            )
-        if fmt_reporte:
-            reporte_style = reporte_style.format(fmt_reporte)
-
-        st.dataframe(reporte_style, use_container_width=True)
-    else:
-        st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
-else:
-    st.info("Para el reporte SIAF se requieren las columnas sec_func, generica y especifica_det.")
-
-# =========================
-# Alertas automáticas por correo
-# =========================
-st.subheader("Automatización de alertas por correo")
-
-if "alert_contacts" not in st.session_state:
-    st.session_state["alert_contacts"] = {}
-if "email_subject" not in st.session_state:
-    st.session_state["email_subject"] = f"Alerta de avance presupuestal - Mes {int(current_month):02d}"
-if "email_body_template" not in st.session_state:
-    st.session_state["email_body_template"] = (
-        "Estimado equipo {area},\n\n"
-        "El avance acumulado registra {avance_acum:.2f}% y el avance del mes es {avance_mes:.2f}%.\n"
-        "PIM: S/ {pim:,.2f}\n"
-        "Devengado acumulado: S/ {devengado:,.2f}\n"
-        "Devengado del mes: S/ {devengado_mes:,.2f}\n\n"
-        "La meta institucional vigente es {meta:.0f}%. Por favor revisen las acciones necesarias para mejorar la ejecución.\n\n"
-        "Saludos,\n"
-        "Equipo de Presupuesto"
-    )
-
-alert_df = pd.DataFrame()
-if not leaderboard_df.empty:
-    mask_acum = pd.Series(False, index=leaderboard_df.index)
-    mask_mes = pd.Series(False, index=leaderboard_df.index)
-    if "avance_acum_%" in leaderboard_df.columns:
-        mask_acum = leaderboard_df["avance_acum_%"] < float(riesgo_umbral)
-    if "avance_mes_%" in leaderboard_df.columns:
-        mask_mes = leaderboard_df["avance_mes_%"] < float(riesgo_umbral)
-    risk_mask = mask_acum | mask_mes
-    if risk_mask.any():
-        alert_df = leaderboard_df.loc[risk_mask].copy()
-
-if alert_df.empty:
-    st.info("No hay áreas con avance por debajo del umbral definido. Ajusta los filtros o el umbral para generar alertas.")
-else:
-    alert_display = round_numeric_for_reporting(alert_df.copy())
-    fmt_alert = build_style_formatters(alert_display)
-    highlight_alert = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
-    alert_style = alert_display.style.applymap(
-        highlight_alert,
-        subset=[c for c in ["avance_acum_%", "avance_mes_%"] if c in alert_display.columns],
-    )
-    if fmt_alert:
-        alert_style = alert_style.format(fmt_alert)
-    st.dataframe(alert_style, use_container_width=True)
-
-    alert_areas = sorted(alert_df["sec_func"].astype(str).unique())
-    for area in alert_areas:
-        st.session_state["alert_contacts"].setdefault(area, "")
-
-    st.markdown("### Contactos por área en riesgo")
-    contact_df = pd.DataFrame(
-        {
-            "Área": alert_areas,
-            "Correo": [st.session_state["alert_contacts"].get(area, "") for area in alert_areas],
-        }
-    )
-    edited_contacts = st.data_editor(
-        contact_df,
-        key="alert_contacts_editor",
-        num_rows="fixed",
-        use_container_width=True,
-    )
-    if st.button("Guardar contactos", key="save_contacts"):
-        updated_contacts = {}
-        for area, email in zip(alert_areas, edited_contacts["Correo"].tolist()):
-            if isinstance(email, str):
-                clean_email = email.strip()
-            elif pd.notna(email):
-                clean_email = str(email).strip()
+                ]]
             else:
-                clean_email = ""
-            if clean_email:
-                updated_contacts[area] = clean_email
-        st.session_state["alert_contacts"] = updated_contacts
-        st.success("Contactos actualizados correctamente.")
+                reporte_siaf_df = pd.DataFrame(
+                    columns=[
+                        "Centro de costo / Genérica de Gasto / Específica de Gasto",
+                        "AVANCE DE EJECUCIÓN ACUMULADO",
+                        "PIM",
+                        "CERTIFICADO",
+                        "COMPROMETIDO",
+                        "DEVENGADO",
+                        "% AVANCE DEV /PIM",
+                    ]
+                )
 
-    missing_contacts = [area for area in alert_areas if not st.session_state["alert_contacts"].get(area)]
-    if missing_contacts:
-        st.info(
-            "Faltan correos para: " + ", ".join(missing_contacts)
-        )
+            reporte_display = round_numeric_for_reporting(reporte_siaf_df)
+            fmt_reporte = build_style_formatters(reporte_display)
+            reporte_style = reporte_display.style
+            if "% AVANCE DEV /PIM" in reporte_display.columns:
+                reporte_style = reporte_style.applymap(
+                    lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                    subset=["% AVANCE DEV /PIM"],
+                )
+            if fmt_reporte:
+                reporte_style = reporte_style.format(fmt_reporte)
+            st.dataframe(reporte_style, use_container_width=True)
 
-    st.markdown("### Configurar envío de correos")
-    sender_email = st.text_input("Cuenta Outlook (remitente)")
-    app_password = st.text_input("Contraseña o app password de Outlook", type="password")
-    smtp_server = st.text_input("Servidor SMTP", value="smtp.office365.com")
-    smtp_port = st.number_input("Puerto SMTP", min_value=1, max_value=65535, value=587, step=1)
-
-    subject = st.text_input("Asunto del correo", key="email_subject")
-    body_template = st.text_area(
-        "Plantilla del mensaje (usa llaves para reemplazos como {area}, {avance_acum}, {avance_mes}, {pim})",
-        key="email_body_template",
-        height=220,
+with tab_descarga:
+    st.header("Descarga de reportes")
+    buf = to_excel_download(
+        resumen=round_numeric_for_reporting(pivot.copy()),
+        avance=round_numeric_for_reporting(avance_series.copy()),
+        proyeccion=proyeccion_wide,
+        ritmo=round_numeric_for_reporting(ritmo_df.copy()),
+        leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
+        reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
     )
-
-    preview_area = st.selectbox("Vista previa del mensaje", alert_areas, key="preview_area")
-    if preview_area:
-        preview_row = alert_df[alert_df["sec_func"].astype(str) == preview_area].iloc[0]
-        preview_body = compose_email_body(body_template, preview_row, meta_avance)
-        st.code(preview_body)
-
-    if st.button("Enviar correos de alerta", key="send_alerts"):
-        if not sender_email or not app_password:
-            st.error("Debes ingresar la cuenta y la contraseña o app password de Outlook.")
-        else:
-            active_contacts = {
-                area: email.strip()
-                for area, email in st.session_state["alert_contacts"].items()
-                if isinstance(email, str) and email.strip()
-            }
-            if not active_contacts:
-                st.warning("No hay correos configurados para las áreas en riesgo.")
-            else:
-                messages = []
-                for area, recipient in active_contacts.items():
-                    row_match = alert_df[alert_df["sec_func"].astype(str) == area]
-                    if row_match.empty:
-                        continue
-                    row = row_match.iloc[0]
-                    body = compose_email_body(body_template, row, meta_avance)
-                    msg = EmailMessage()
-                    msg["Subject"] = subject
-                    msg["From"] = sender_email
-                    msg["To"] = recipient
-                    msg.set_content(body)
-                    messages.append(msg)
-                if not messages:
-                    st.warning("No se generaron mensajes para enviar.")
-                else:
-                    try:
-                        with smtplib.SMTP(smtp_server, int(smtp_port)) as smtp:
-                            smtp.starttls()
-                            smtp.login(sender_email, app_password)
-                            for msg in messages:
-                                smtp.send_message(msg)
-                        st.success(f"Se enviaron {len(messages)} alerta(s) correctamente.")
-                    except Exception as exc:
-                        st.error(f"No se pudieron enviar los correos: {exc}")
-
-# =========================
-# Descarga a Excel
-# =========================
-buf = to_excel_download(
-    resumen=round_numeric_for_reporting(pivot.copy()),
-    avance=round_numeric_for_reporting(avance_series.rename(columns={"contrib_pct": "contrib_%"})),
-    proyeccion=proyeccion_wide,
-    ritmo=round_numeric_for_reporting(ritmo_df.copy()),
-    leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
-    reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
-)
-st.download_button(
-    "Descargar Excel (Resumen + Avance)",
-    data=buf,
-    file_name="siaf_resumen_avance.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+    st.download_button(
+        "Descargar Excel (Resumen + Avance)",
+        data=buf,
+        file_name="siaf_resumen_avance.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
