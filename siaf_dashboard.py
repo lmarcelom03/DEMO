@@ -676,50 +676,60 @@ with tab_avance:
         st.info("No hay información de devengado mensual para graficar.")
     else:
         avance_display = avance_series.copy()
-        bar = (
-            alt.Chart(avance_display)
-            .mark_bar(color="#1f77b4")
-            .encode(
-                x=alt.X("mes:O", title="Mes"),
-                y=alt.Y("devengado:Q", title="Devengado", axis=alt.Axis(format=",.2f")),
-                tooltip=[
-                    alt.Tooltip("mes", title="Mes"),
-                    alt.Tooltip("devengado", title="Devengado", format=",.2f"),
-                    alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
-                ],
-            )
+        vista_avance = st.radio(
+            "Selecciona la vista",
+            ("Gráfico", "Tabla"),
+            horizontal=True,
+            key="avance_view_mode",
+            help="Alterna entre la visualización gráfica y la tabla resumen del devengado mensual.",
+            label_visibility="collapsed",
         )
-        line = (
-            alt.Chart(avance_display)
-            .mark_line(color="#ff7f0e", point=True)
-            .encode(
-                x=alt.X("mes:O", title="Mes"),
-                y=alt.Y("%_acumulado:Q", title="% acumulado", axis=alt.Axis(format=".2f")),
-                tooltip=[
-                    alt.Tooltip("mes", title="Mes"),
-                    alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
-                ],
-            )
-        )
-        chart = alt.layer(bar, line).resolve_scale(y="independent").properties(width=520, height=260)
-        st.altair_chart(chart, use_container_width=False)
 
-        avance_table = round_numeric_for_reporting(avance_display)
-        fmt_avance = build_style_formatters(avance_table)
-        avance_style = avance_table.style
-        if "%_acumulado" in avance_table.columns:
-            avance_style = avance_style.applymap(
-                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=["%_acumulado"],
+        if vista_avance == "Gráfico":
+            bar = (
+                alt.Chart(avance_display)
+                .mark_bar(color="#1f77b4")
+                .encode(
+                    x=alt.X("mes:O", title="Mes"),
+                    y=alt.Y("devengado:Q", title="Devengado", axis=alt.Axis(format=",.2f")),
+                    tooltip=[
+                        alt.Tooltip("mes", title="Mes"),
+                        alt.Tooltip("devengado", title="Devengado", format=",.2f"),
+                        alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
+                    ],
+                )
             )
-        if fmt_avance:
-            avance_style = avance_style.format(fmt_avance)
-        st.dataframe(avance_style, use_container_width=True)
+            line = (
+                alt.Chart(avance_display)
+                .mark_line(color="#ff7f0e", point=True)
+                .encode(
+                    x=alt.X("mes:O", title="Mes"),
+                    y=alt.Y("%_acumulado:Q", title="% acumulado", axis=alt.Axis(format=".2f")),
+                    tooltip=[
+                        alt.Tooltip("mes", title="Mes"),
+                        alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
+                    ],
+                )
+            )
+            chart = alt.layer(bar, line).resolve_scale(y="independent").properties(width=520, height=260)
+            st.altair_chart(chart, use_container_width=False)
+        else:
+            avance_table = round_numeric_for_reporting(avance_display)
+            fmt_avance = build_style_formatters(avance_table)
+            avance_style = avance_table.style
+            if "%_acumulado" in avance_table.columns:
+                avance_style = avance_style.applymap(
+                    lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                    subset=["%_acumulado"],
+                )
+            if fmt_avance:
+                avance_style = avance_style.format(fmt_avance)
+            st.dataframe(avance_style, use_container_width=True)
 
 with tab_gestion:
     st.header("Ritmo requerido por proceso")
     if "mto_pim" not in df_view.columns:
-        st.info("Se requiere la columna mto_pim para calcular el ritmo requerido.")
+        st.info("No hay datos de PIM para calcular el ritmo requerido.")
     else:
         remaining_months = max(12 - current_month, 1)
         pim_total = df_view["mto_pim"].sum()
@@ -730,21 +740,39 @@ with tab_gestion:
             needed = max(pim_total - total, 0)
             required_avg = needed / remaining_months
             processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
-        ritmo_df = pd.DataFrame(processes)
-        ritmo_df = round_numeric_for_reporting(ritmo_df)
-        ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
-        chart_ritmo = (
-            alt.Chart(ritmo_melt)
-            .mark_bar()
-            .encode(
-                x=alt.X("Proceso:N"),
-                y=alt.Y("Monto:Q", axis=alt.Axis(format=",.2f")),
-                color="Tipo:N",
-                tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
+        ritmo_df = round_numeric_for_reporting(pd.DataFrame(processes))
+        if ritmo_df.empty:
+            st.info("No hay información suficiente para calcular el ritmo requerido.")
+        else:
+            vista_ritmo = st.radio(
+                "Selecciona la vista",
+                ("Gráfico", "Tabla"),
+                horizontal=True,
+                key="ritmo_view_mode",
+                help="Elige si deseas comparar el ritmo actual vs. necesario en gráfico o tabla.",
+                label_visibility="collapsed",
             )
-            .properties(width=600, height=300)
-        )
-        st.altair_chart(chart_ritmo, use_container_width=False)
+
+            if vista_ritmo == "Gráfico":
+                ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
+                chart_ritmo = (
+                    alt.Chart(ritmo_melt)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Proceso:N"),
+                        y=alt.Y("Monto:Q", axis=alt.Axis(format=",.2f")),
+                        color="Tipo:N",
+                        tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
+                    )
+                    .properties(width=600, height=300)
+                )
+                st.altair_chart(chart_ritmo, use_container_width=False)
+            else:
+                fmt_ritmo = build_style_formatters(ritmo_df)
+                ritmo_style = ritmo_df.style
+                if fmt_ritmo:
+                    ritmo_style = ritmo_style.format(fmt_ritmo)
+                st.dataframe(ritmo_style, use_container_width=True)
 
     st.header("Top áreas con menor avance")
     if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
@@ -752,37 +780,29 @@ with tab_gestion:
         if "mto_certificado" in df_view.columns:
             agg_cols.insert(1, "mto_certificado")
         agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
-        if not agg_sec.empty:
+        if agg_sec.empty:
+            st.info("No hay datos disponibles para calcular el rendimiento por área.")
+        else:
             agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
             agg_sec["avance_mes_%"] = np.where(
-                agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0
+                agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0,
             )
             agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
             agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
 
             max_top = int(agg_sec.shape[0])
-            top_default = 5 if max_top >= 5 else max_top
-            top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top, value=top_default)
+            top_default = min(5, max_top) if max_top else 1
+            top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top or 1, value=top_default)
 
             leaderboard_df = (
                 agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
                 .head(top_n)
                 .copy()
             )
-            display_cols = [
-                "rank_acum",
-                "rank_mes",
-                "sec_func",
-                "mto_pim",
-            ]
+            display_cols = ["rank_acum", "rank_mes", "sec_func", "mto_pim"]
             if "mto_certificado" in agg_sec.columns:
                 display_cols.append("mto_certificado")
-            display_cols.extend([
-                "devengado",
-                "avance_acum_%",
-                "devengado_mes",
-                "avance_mes_%",
-            ])
+            display_cols.extend(["devengado", "avance_acum_%", "devengado_mes", "avance_mes_%"])
             leaderboard_df = leaderboard_df[display_cols]
 
             leaderboard_display = round_numeric_for_reporting(leaderboard_df)
@@ -869,7 +889,9 @@ with tab_gestion:
 
         missing_contacts = [area for area in alert_areas if not st.session_state["alert_contacts"].get(area)]
         if missing_contacts:
-            st.info("Faltan correos para: " + ", ".join(missing_contacts))
+            st.info(
+                "Faltan correos para: " + ", ".join(missing_contacts)
+            )
 
         st.markdown("### Configurar envío de correos")
         sender_email = st.text_input("Cuenta Outlook (remitente)")
