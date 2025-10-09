@@ -971,11 +971,16 @@ if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_de
                 pivot_table = pivot_table.loc[:, (pivot_table != "").any(axis=0)]
                 pivot_table.columns.name = "especifica_det"
 
-                # Streamlit/pyarrow requires 2D tables with simple columns; flatten the index and
-                # make sure every cell is rendered as a plain string to avoid ArrowInvalid errors.
-                pivot_table = pivot_table.applymap(lambda value: "" if pd.isna(value) else str(value))
                 pivot_table = pivot_table.reset_index()
                 pivot_table.columns = [str(col) for col in pivot_table.columns]
+
+                def _normalize_cell(value):
+                    if pd.isna(value):
+                        return ""
+                    text = str(value).strip()
+                    return "" if text.lower() in {"nan", "none", "<na>"} else text
+
+                pivot_table = pivot_table.applymap(_normalize_cell)
 
                 st.dataframe(pivot_table, use_container_width=True)
     else:
@@ -1141,4 +1146,5 @@ st.download_button(
     file_name="siaf_resumen_avance.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
 
