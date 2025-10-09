@@ -74,7 +74,6 @@ SEC_FUNC_MAP.update({str(k): v for k, v in SEC_FUNC_MAP.items()})
 
 _sec_func_pattern = re.compile(r"^\s*0*(\d+)")
 
-
 def map_sec_func(value):
     """Normaliza y reemplaza los códigos *sec_func* por sus áreas."""
     if pd.isna(value):
@@ -102,7 +101,6 @@ def map_sec_func(value):
 
     return SEC_FUNC_MAP.get(text, value)
 
-
 AMOUNT_KEYWORDS = (
     "mto",
     "devengado",
@@ -121,14 +119,11 @@ AMOUNT_KEYWORDS = (
 EXCLUDE_ROUND_COLS = {"mes", "rank_acum", "rank_mes", "n"}
 Z_SCORE_95 = 1.96
 
-
 def _format_amount(value):
     return "" if pd.isna(value) else f"{value:,.2f}"
 
-
 def _format_percent(value):
     return "" if pd.isna(value) else f"{value:.2f}%"
-
 
 def round_numeric_for_reporting(df):
     """Round monetary/percentage numeric columns to two decimals without altering counts."""
@@ -144,7 +139,6 @@ def round_numeric_for_reporting(df):
             df[col] = df[col].round(2)
     return df
 
-
 def build_style_formatters(df):
     """Return formatter dict for Streamlit Styler with 2-decimal monetary and percent columns."""
     numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -159,6 +153,19 @@ def build_style_formatters(df):
             formatters[col] = _format_amount
     return formatters
 
+def join_unique_nonempty(values, sep="\n"):
+    """Join unique, non-empty string representations preserving order."""
+
+    seen = []
+    for value in values:
+        if pd.isna(value):
+            continue
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            continue
+        if text not in seen:
+            seen.append(text)
+    return sep.join(seen)
 
 def compose_email_body(template, row, meta_avance):
     """Format the user-provided email template with area metrics."""
@@ -183,6 +190,7 @@ def compose_email_body(template, row, meta_avance):
 # =========================
 # Utilitarios de carga
 # =========================
+
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
     """
     Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', 'mto_', 'devenga', 'girado').
@@ -201,7 +209,6 @@ def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_gu
                 return s, r
     # Fallback: primera hoja y fila indicada por el usuario - 1 (a índice 0)
     return xls.sheet_names[0], header_guess - 1
-
 
 def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=True):
     xls = pd.ExcelFile(excel_bytes)
@@ -222,7 +229,6 @@ def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=Tru
 # =========================
 def find_monthly_columns(df, prefix):
     return [f"{prefix}{i:02d}" for i in range(1, 13) if f"{prefix}{i:02d}" in df.columns]
-
 
 def ensure_ci_ec_steps(df, month, umbral):
     """
@@ -263,7 +269,6 @@ def ensure_ci_ec_steps(df, month, umbral):
 # =========================
 _code_re = re.compile(r"^\s*(\d+(?:\.\d+)*)")
 
-
 def extract_code(text):
     """Extrae el prefijo numérico (con puntos) de un texto tipo '2.1.1 Bienes y servicios'."""
     if pd.isna(text):
@@ -272,10 +277,8 @@ def extract_code(text):
     m = _code_re.match(s)
     return m.group(1) if m else ""
 
-
 def last_segment(code):
     return code.split(".")[-1] if code else ""
-
 
 def concat_hierarchy(gen, sub, subdet, esp, espdet):
     """
@@ -297,7 +300,6 @@ def concat_hierarchy(gen, sub, subdet, esp, espdet):
                 parts.append(child)
     return parts[-1] if parts else ""
 
-
 def normalize_clasificador(code):
     """
     Regla: todo clasificador debe comenzar con '2.'.
@@ -308,14 +310,12 @@ def normalize_clasificador(code):
         return "2."
     return code if code.startswith("2.") else "2." + code
 
-
 def desc_only(text):
     """Devuelve solo la descripción (lo que va después del primer punto)."""
     if pd.isna(text):
         return ""
     s = str(text)
     return s.split(".", 1)[1].strip() if "." in s else s
-
 
 def build_classifier_columns(df):
     """
@@ -382,13 +382,11 @@ def pivot_exec(df, group_col, dev_cols):
         df["devengado"] = df[dev_cols].sum(axis=1)
 
     g = df.groupby(group_col, dropna=False)[cols].sum().reset_index()
-
     if "mto_pim" in g.columns and "devengado" in g.columns:
         g["saldo_pim"] = g["mto_pim"] - g["devengado"]
         g["avance_%"] = np.where(g["mto_pim"] > 0, g["devengado"] / g["mto_pim"] * 100.0, 0.0)
 
     return g
-
 
 def to_excel_download(
     resumen,
@@ -662,7 +660,7 @@ if dev_cols and "mto_pim" in df_view.columns:
                 st.info("No hay datos históricos suficientes para proyectar la ejecución por área.")
             else:
                 real_sec = dev_sec_long[dev_sec_long["mes"] <= current_month].copy()
-                real_sec["sec_func"] = real_sec["sec_func"].astype(str)
+                real_sec["sec_func"] = real_sec["sec_func"].astype(str)")
                 if real_sec.empty:
                     st.info("No hay registros devengados en los meses analizados para generar la proyección.")
                 else:
@@ -856,11 +854,38 @@ if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_de
     ]
 
     if siaf_agg_cols:
+        base_group = ["sec_func", "generica", "especifica_det"]
+        agg_map = {col: "sum" for col in siaf_agg_cols}
+        if "clasificador_cod" in df_view.columns:
+            agg_map["clasificador_cod"] = "first"
+        if "especifica_det_desc" in df_view.columns:
+            agg_map["especifica_det_desc"] = "first"
+
         reporte_siaf_df = (
-            df_view.groupby(["sec_func", "generica", "especifica_det"], dropna=False)[siaf_agg_cols]
-            .sum()
+            df_view.groupby(base_group, dropna=False)
+            .agg(agg_map)
             .reset_index()
         )
+
+        if "clasificador_cod" in reporte_siaf_df.columns:
+            clasificador_cod = reporte_siaf_df["clasificador_cod"].fillna("").astype(str).str.strip()
+        else:
+            clasificador_cod = reporte_siaf_df["especifica_det"].map(extract_code).fillna("").astype(str).str.strip()
+
+        if "especifica_det_desc" in reporte_siaf_df.columns:
+            concepto = reporte_siaf_df["especifica_det_desc"].fillna("").astype(str).str.strip()
+        else:
+            concepto = reporte_siaf_df["especifica_det"].map(desc_only).fillna("").astype(str).str.strip()
+
+        tiene_cod = (clasificador_cod != "") & (clasificador_cod != "nan")
+        tiene_concepto = (concepto != "") & (concepto != "nan")
+        reporte_siaf_df["clasificador_cod_concepto"] = np.where(
+            tiene_cod & tiene_concepto,
+            clasificador_cod + " - " + concepto,
+            np.where(tiene_concepto, concepto, clasificador_cod),
+        )
+
+        reporte_siaf_df = reporte_siaf_df.drop(columns=["clasificador_cod", "especifica_det_desc"], errors="ignore")
 
         if "mto_pim" in reporte_siaf_df.columns and "devengado" in reporte_siaf_df.columns:
             reporte_siaf_df["avance_%"] = np.where(
@@ -869,17 +894,64 @@ if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_de
                 0.0,
             )
 
-        reporte_siaf_display = round_numeric_for_reporting(reporte_siaf_df.copy())
-        fmt_siaf = build_style_formatters(reporte_siaf_display)
-        siaf_style = reporte_siaf_display.style
-        if "avance_%" in reporte_siaf_display.columns:
-            siaf_style = siaf_style.applymap(
-                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=["avance_%"],
+        pivot_source = reporte_siaf_df[
+            ["sec_func", "generica", "especifica_det", "clasificador_cod_concepto"]
+        ].copy()
+        pivot_source["sec_func"] = pivot_source["sec_func"].fillna("")
+        pivot_source["generica"] = pivot_source["generica"].fillna("")
+        pivot_source["especifica_det"] = (
+            pivot_source["especifica_det"].fillna("").astype(str).str.strip()
+        )
+        pivot_source["clasificador_cod_concepto"] = (
+            pivot_source["clasificador_cod_concepto"].fillna("").astype(str).str.strip()
+        )
+        pivot_source = pivot_source[pivot_source["especifica_det"] != ""]
+
+        if pivot_source.empty:
+            st.info(
+                "No hay específicas detalle con clasificador para el reporte por área."
             )
-        if fmt_siaf:
-            siaf_style = siaf_style.format(fmt_siaf)
-        st.dataframe(siaf_style, use_container_width=True)
+        else:
+            pivot_values = (
+                pivot_source.sort_values(
+                    [
+                        "sec_func",
+                        "generica",
+                        "especifica_det",
+                        "clasificador_cod_concepto",
+                    ],
+                    kind="stable",
+                )
+                .groupby(["sec_func", "generica", "especifica_det"], dropna=False)[
+                    "clasificador_cod_concepto"
+                ]
+                .agg(join_unique_nonempty)
+            )
+
+            if pivot_values.empty:
+                st.info(
+                    "No hay específicas detalle con clasificador para el reporte por área."
+                )
+            else:
+                pivot_table = pivot_values.unstack("especifica_det").fillna("")
+
+                def _column_sort_key(label):
+                    code = extract_code(label)
+                    if not code:
+                        return (tuple(), str(label))
+                    parts = []
+                    for segment in code.split("."):
+                        try:
+                            parts.append(int(segment))
+                        except ValueError:
+                            parts.append(segment)
+                    return (tuple(parts), str(label))
+
+                ordered_columns = sorted(pivot_table.columns, key=_column_sort_key)
+                pivot_table = pivot_table.reindex(columns=ordered_columns)
+                pivot_table = pivot_table.loc[:, (pivot_table != "").any(axis=0)]
+                pivot_table.columns.name = "especifica_det"
+                st.dataframe(pivot_table, use_container_width=True)
     else:
         st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
 else:
