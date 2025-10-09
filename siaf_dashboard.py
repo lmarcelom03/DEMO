@@ -51,12 +51,12 @@ with st.sidebar:
 
 # Mapeo de códigos de sec_func a nombres
 SEC_FUNC_MAP = {
-    1: "PI 2",
-    2: "DCEME2",
+    1: "PI_2",
+    2: "DCEME",
     3: "DE",
-    4: "PI 1",
+    4: "PI_1",
     5: "OPP",
-    6: "JEFATURA",
+    6: "JEF",
     7: "GG",
     8: "OAUGD",
     9: "OTI",
@@ -67,9 +67,6 @@ SEC_FUNC_MAP = {
     14: "OCI",
     15: "DCEME15",
     16: "DETN16",
-    18: "DCEME18",
-    19: "DCEME19",
-    20: "DETN20",
     21: "DETN21",
     22: "DETN22",
 }
@@ -165,6 +162,7 @@ def build_style_formatters(df):
 
 def compose_email_body(template, row, meta_avance):
     """Format the user-provided email template with area metrics."""
+
     def _safe_float(value):
         try:
             return float(value)
@@ -187,7 +185,7 @@ def compose_email_body(template, row, meta_avance):
 # =========================
 def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_guess):
     """
-    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'pim', 'pia', etc.).
+    Busca la hoja y la fila que luce como encabezado (contenga 'ano_eje', 'mto_', 'pim', etc.).
     Retorna (sheet_name, header_row_index_pandas).
     """
     candidate_sheets = [user_sheet] if user_sheet else xls.sheet_names
@@ -203,6 +201,7 @@ def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_gu
                 return s, r
     # Fallback: primera hoja y fila indicada por el usuario - 1 (a índice 0)
     return xls.sheet_names[0], header_guess - 1
+
 
 def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=True):
     xls = pd.ExcelFile(excel_bytes)
@@ -223,6 +222,7 @@ def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=Tru
 # =========================
 def find_monthly_columns(df, prefix):
     return [f"{prefix}{i:02d}" for i in range(1, 13) if f"{prefix}{i:02d}" in df.columns]
+
 
 def ensure_ci_ec_steps(df, month, umbral):
     """
@@ -263,6 +263,7 @@ def ensure_ci_ec_steps(df, month, umbral):
 # =========================
 _code_re = re.compile(r"^\s*(\d+(?:\.\d+)*)")
 
+
 def extract_code(text):
     """Extrae el prefijo numérico (con puntos) de un texto tipo '2.1.1 Bienes y servicios'."""
     if pd.isna(text):
@@ -271,8 +272,10 @@ def extract_code(text):
     m = _code_re.match(s)
     return m.group(1) if m else ""
 
+
 def last_segment(code):
     return code.split(".")[-1] if code else ""
+
 
 def concat_hierarchy(gen, sub, subdet, esp, espdet):
     """
@@ -285,16 +288,15 @@ def concat_hierarchy(gen, sub, subdet, esp, espdet):
     for child in [sub, subdet, esp, espdet]:
         if not child:
             continue
-        # Si el hijo ya trae el prefijo, lo conservamos
         if parts and (child.startswith(parts[-1] + ".") or child.startswith(parts[0] + ".")):
             parts.append(child)
         else:
-            # Caso contrario, agregamos solo el último segmento al prefijo anterior
             if parts:
                 parts.append(parts[-1] + "." + last_segment(child))
             else:
                 parts.append(child)
     return parts[-1] if parts else ""
+
 
 def normalize_clasificador(code):
     """
@@ -306,12 +308,14 @@ def normalize_clasificador(code):
         return "2."
     return code if code.startswith("2.") else "2." + code
 
+
 def desc_only(text):
     """Devuelve solo la descripción (lo que va después del primer punto)."""
     if pd.isna(text):
         return ""
     s = str(text)
     return s.split(".", 1)[1].strip() if "." in s else s
+
 
 def build_classifier_columns(df):
     """
@@ -341,7 +345,6 @@ def build_classifier_columns(df):
         )
     ]
 
-    # Descripciones sin código
     df["generica_desc"] = gen.map(desc_only) if "generica" in df.columns else ""
     df["subgenerica_desc"] = sub.map(desc_only) if "subgenerica" in df.columns else ""
     df["subgenerica_det_desc"] = subdet.map(desc_only) if "subgenerica_det" in df.columns else ""
@@ -374,7 +377,6 @@ def pivot_exec(df, group_col, dev_cols):
     if dev_cols:
         cols.append("devengado")
 
-    # Si no existía 'devengado' pero hay columnas mensuales, lo armamos en copia
     if "devengado" not in df.columns and dev_cols:
         df = df.copy()
         df["devengado"] = df[dev_cols].sum(axis=1)
@@ -387,25 +389,29 @@ def pivot_exec(df, group_col, dev_cols):
 
     return g
 
-def to_excel_download(resumen, avance, proyeccion=None, ritmo=None, leaderboard=None):
+
+def to_excel_download(
+    resumen,
+    avance,
+    proyeccion=None,
+    ritmo=None,
+    leaderboard=None,
+    reporte_siaf=None,
+):
     wb = Workbook()
-    # remove the default sheet to control ordering
     wb.remove(wb.active)
 
     def add_table_with_chart(df, sheet_name):
         ws = wb.create_sheet(sheet_name)
         for r in dataframe_to_rows(df, index=False, header=True):
             ws.append(r)
-        # Skip table/chart creation when there are no data rows
         if ws.max_row <= 1:
             return
-        # create an Excel table for easier filtering in the workbook
         ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
         tbl = Table(displayName=f"Tbl{sheet_name[:20].replace(' ','_')}", ref=ref)
         tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
         ws.add_table(tbl)
 
-        # build a bar chart using the first column as categories and remaining numeric columns as data
         num_cols = [i + 2 for i, c in enumerate(df.columns[1:]) if pd.api.types.is_numeric_dtype(df[c])]
         if num_cols:
             chart = BarChart()
@@ -426,6 +432,8 @@ def to_excel_download(resumen, avance, proyeccion=None, ritmo=None, leaderboard=
         add_table_with_chart(ritmo, "Ritmo")
     if leaderboard is not None and not leaderboard.empty:
         add_table_with_chart(leaderboard, "Leaderboard")
+    if reporte_siaf is not None and not reporte_siaf.empty:
+        add_table_with_chart(reporte_siaf, "Reporte_SIAF")
 
     output = io.BytesIO()
     wb.save(output)
@@ -664,79 +672,85 @@ if dev_cols and "mto_pim" in df_view.columns:
                     stats = stats.reindex(unique_areas).fillna(0.0)
                     stats.rename(columns={"count": "n", "mean": "mean", "std": "std"}, inplace=True)
                     stats["per_mes_proj"] = stats.apply(
-                        lambda row: row["mean"] if row["n"] <= 1 or row["std"] == 0 else max(
-                            row["mean"] - Z_SCORE_95 * row["std"] / np.sqrt(row["n"]),
+                        lambda row: max(
+                            row["mean"] - Z_SCORE_95 * (row["std"] / np.sqrt(row["n"])) if row["n"] > 0 else 0.0,
                             0.0,
                         ),
                         axis=1,
                     )
                     proj_records = []
-                    for area, row in stats.iterrows():
-                        per_month = row["per_mes_proj"]
-                        if remaining_months > 0:
+                    if remaining_months > 0:
+                        for sec, per_month in stats["per_mes_proj"].items():
                             for m in range(current_month + 1, 13):
                                 proj_records.append(
-                                    {"sec_func": area, "mes": m, "monto": per_month, "tipo": "Necesario"}
+                                    {
+                                        "sec_func": sec,
+                                        "mes": m,
+                                        "monto": max(per_month, 0.0),
+                                        "tipo": "Proyectado",
+                                    }
                                 )
                     real_sec["tipo"] = "Real"
                     proj_sec = pd.DataFrame(proj_records)
-                    dev_proj_sec = pd.concat(
-                        [real_sec[["sec_func", "mes", "monto", "tipo"]], proj_sec],
-                        ignore_index=True,
+                    frames = [real_sec[["sec_func", "mes", "monto", "tipo"]]]
+                    if not proj_sec.empty():
+                        frames.append(proj_sec)
+                    dev_proj_sec = pd.concat(frames, ignore_index=True)
+                    dev_proj_sec["monto"] = dev_proj_sec["monto"].round(2)
+
+                    chart_proj = (
+                        alt.Chart(dev_proj_sec)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X("mes:O", title="Mes"),
+                            y=alt.Y("monto:Q", title="Devengado", axis=alt.Axis(format=",.2f")),
+                            color=alt.Color("sec_func:N", title="Área"),
+                            column=alt.Column("tipo:N", title=""),
+                            tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",.2f")],
+                        )
+                        .properties(width=160, height=240)
                     )
-                    if not dev_proj_sec.empty:
-                        dev_proj_sec["monto"] = dev_proj_sec["monto"].round(2)
-                        chart_proj = (
-                            alt.Chart(dev_proj_sec)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("mes:O", title="Mes"),
-                                y=alt.Y("monto:Q", title="Devengado"),
-                                color=alt.Color("sec_func:N", title="Área"),
-                                column=alt.Column("tipo:N", title=""),
-                                tooltip=["sec_func", "mes", alt.Tooltip("monto", format=",.2f")],
-                            )
-                            .properties(width=160, height=240)
-                        )
-                        st.altair_chart(chart_proj, use_container_width=True)
-                        proyeccion_wide = (
-                            dev_proj_sec.pivot_table(
-                                index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0
-                            )
-                            .sort_index(axis=1)
-                            .reset_index()
-                        )
-                        proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
-                        proyeccion_wide = round_numeric_for_reporting(proyeccion_wide)
+                    st.altair_chart(chart_proj, use_container_width=True)
 
-                        pim_sec = df_view.groupby("sec_func")["mto_pim"].sum().reindex(unique_areas, fill_value=0.0)
-                        real_totals = real_sec.groupby("sec_func")["monto"].sum().reindex(unique_areas, fill_value=0.0)
-                        proyectado_futuro = stats["per_mes_proj"] * remaining_months
-                        total_estimado = real_totals + proyectado_futuro
-                        avance_estimado = np.where(pim_sec > 0, total_estimado / pim_sec * 100.0, 0.0)
+                    proyeccion_wide = (
+                        dev_proj_sec.pivot_table(index="mes", columns=["sec_func", "tipo"], values="monto", fill_value=0)
+                        .sort_index(axis=1)
+                        .reset_index()
+                    )
+                    proyeccion_wide.columns = ["mes"] + [f"{sec}_{tipo}" for sec, tipo in proyeccion_wide.columns[1:]]
+                    proyeccion_wide = round_numeric_for_reporting(proyeccion_wide)
 
-                        proyeccion_resumen = pd.DataFrame(
-                            {
-                                "sec_func": unique_areas,
-                                "devengado_real": real_totals.values,
-                                "proyeccion_futura": proyectado_futuro.values,
-                                "total_estimado": total_estimado.values,
-                                "mto_pim": pim_sec.values,
-                                "avance_estimado_%": avance_estimado,
-                            }
+                    pim_sec = df_view.groupby("sec_func")["mto_pim"].sum().reindex(unique_areas, fill_value=0.0)
+                    real_totals = real_sec.groupby("sec_func")["monto"].sum().reindex(unique_areas, fill_value=0.0)
+                    proyectado_futuro = stats["per_mes_proj"] * remaining_months
+                    total_estimado = real_totals + proyectado_futuro
+                    avance_estimado = np.where(pim_sec > 0, total_estimado / pim_sec * 100.0, 0.0)
+
+                    proyeccion_resumen = pd.DataFrame(
+                        {
+                            "sec_func": unique_areas,
+                            "devengado_real": real_totals.values,
+                            "proyeccion_futura": proyectado_futuro.values,
+                            "total_estimado": total_estimado.values,
+                            "mto_pim": pim_sec.values,
+                            "avance_estimado_%": avance_estimado,
+                        }
+                    )
+                    proyeccion_resumen = round_numeric_for_reporting(proyeccion_resumen)
+                    fmt_proj = build_style_formatters(proyeccion_resumen)
+                    resumen_style = proyeccion_resumen.style
+                    if "avance_estimado_%" in proyeccion_resumen.columns:
+                        resumen_style = resumen_style.applymap(
+                            lambda v: "background-color: #ffcccc" if v < float(meta_avance) else "",
+                            subset=["avance_estimado_%"],
                         )
-                        proyeccion_resumen = round_numeric_for_reporting(proyeccion_resumen)
-                        fmt_proj = build_style_formatters(proyeccion_resumen)
-                        resumen_style = proyeccion_resumen.style
-                        if "avance_estimado_%" in proyeccion_resumen.columns:
-                            resumen_style = resumen_style.applymap(
-                                lambda v: "background-color: #ffcccc" if v < float(meta_avance) else "",
-                                subset=["avance_estimado_%"],
-                            )
-                        if fmt_proj:
-                            resumen_style = resumen_style.format(fmt_proj)
-                        st.dataframe(resumen_style, use_container_width=True)
+                    if fmt_proj:
+                        resumen_style = resumen_style.format(fmt_proj)
+                    st.dataframe(resumen_style, use_container_width=True)
 
+# =========================
+# Ritmo requerido por proceso
+# =========================
 ritmo_df = pd.DataFrame()
 leaderboard_df = pd.DataFrame()
 if "mto_pim" in df_view.columns:
@@ -822,17 +836,88 @@ if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
         st.info("No hay datos disponibles para calcular el rendimiento por área.")
 
 # =========================
-# Gestión de alertas por correo
+# Reporte SIAF por área y clasificadores
 # =========================
-st.subheader("Automatización de alertas por Outlook")
-st.markdown(
-    "Configura destinatarios, redacta una plantilla y envía correos de alerta para las áreas con avance por debajo del umbral."
-)
+reporte_siaf_df = pd.DataFrame()
+if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
+    st.subheader("Reporte SIAF por área, genérica y específica detalle")
+    siaf_agg_cols = [
+        c
+        for c in [
+            "mto_pia",
+            "mto_pim",
+            "mto_certificado",
+            "mto_compro_anual",
+            "devengado_mes",
+            "devengado",
+            "saldo_pim",
+        ]
+        if c in df_view.columns
+    ]
+
+    if siaf_agg_cols:
+        reporte_siaf_df = (
+            df_view.groupby(["sec_func", "generica", "especifica_det"], dropna=False)[siaf_agg_cols]
+            .sum()
+            .reset_index()
+        )
+
+        if "mto_pim" in reporte_siaf_df.columns and "devengado" in reporte_siaf_df.columns:
+            reporte_siaf_df["avance_%"] = np.where(
+                reporte_siaf_df["mto_pim"] > 0,
+                reporte_siaf_df["devengado"] / reporte_siaf_df["mto_pim"] * 100.0,
+                0.0,
+            )
+
+        reporte_siaf_display = round_numeric_for_reporting(reporte_siaf_df.copy())
+        fmt_siaf = build_style_formatters(reporte_siaf_display)
+        siaf_style = reporte_siaf_display.style
+        if "avance_%" in reporte_siaf_display.columns:
+            siaf_style = siaf_style.applymap(
+                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                subset=["avance_%"],
+            )
+        if fmt_siaf:
+            siaf_style = siaf_style.format(fmt_siaf)
+        st.dataframe(siaf_style, use_container_width=True)
+    else:
+        st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
+else:
+    st.info("Para el reporte SIAF se requieren las columnas sec_func, generica y especifica_det.")
+
+# =========================
+# Alertas automáticas por correo
+# =========================
+st.subheader("Automatización de alertas por correo")
 
 if "alert_contacts" not in st.session_state:
     st.session_state["alert_contacts"] = {}
+if "email_subject" not in st.session_state:
+    st.session_state["email_subject"] = f"Alerta de avance presupuestal - Mes {int(current_month):02d}"
+if "email_body_template" not in st.session_state:
+    st.session_state["email_body_template"] = (
+        "Estimado equipo {area},\n\n"
+        "El avance acumulado registra {avance_acum:.2f}% y el avance del mes es {avance_mes:.2f}%.\n"
+        "PIM: S/ {pim:,.2f}\n"
+        "Devengado acumulado: S/ {devengado:,.2f}\n"
+        "Devengado del mes: S/ {devengado_mes:,.2f}\n\n"
+        "La meta institucional vigente es {meta:.0f}%. Por favor revisen las acciones necesarias para mejorar la ejecución.\n\n"
+        "Saludos,\n"
+        "Equipo de Presupuesto"
+    )
 
-alert_df = leaderboard_df.copy()
+alert_df = pd.DataFrame()
+if not leaderboard_df.empty:
+    mask_acum = pd.Series(False, index=leaderboard_df.index)
+    mask_mes = pd.Series(False, index=leaderboard_df.index)
+    if "avance_acum_%" in leaderboard_df.columns:
+        mask_acum = leaderboard_df["avance_acum_%"] < float(riesgo_umbral)
+    if "avance_mes_%" in leaderboard_df.columns:
+        mask_mes = leaderboard_df["avance_mes_%"] < float(riesgo_umbral)
+    risk_mask = mask_acum | mask_mes
+    if risk_mask.any():
+        alert_df = leaderboard_df.loc[risk_mask].copy()
+
 if alert_df.empty:
     st.info("No hay áreas con avance por debajo del umbral definido. Ajusta los filtros o el umbral para generar alertas.")
 else:
@@ -950,6 +1035,7 @@ buf = to_excel_download(
     proyeccion=proyeccion_wide,
     ritmo=round_numeric_for_reporting(ritmo_df.copy()),
     leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
+    reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
 )
 st.download_button(
     "Descargar Excel (Resumen + Avance)",
