@@ -1,36 +1,166 @@
-import re
+import base64
 import io
+import re
 import smtplib
 from email.message import EmailMessage
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
-import altair as alt
 from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.chart import BarChart, Reference
-from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
+
+PRIMARY_COLOR = "#c62828"
+SECONDARY_COLOR = "#fbe9e7"
+ACCENT_COLOR = "#0f4c81"
+
+LOGO_BASE64 = (
+    "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"
+)
+LOGO_IMAGE = base64.b64decode(LOGO_BASE64)
+
+APP_CSS = f"""
+<style>
+:root {{
+    --primary-color: {PRIMARY_COLOR};
+    --accent-color: {ACCENT_COLOR};
+    --secondary-color: {SECONDARY_COLOR};
+}}
+
+[data-testid="stAppViewContainer"] {{
+    background: linear-gradient(135deg, var(--secondary-color) 0%, #ffffff 55%);
+}}
+
+[data-testid="stSidebar"] {{
+    background: linear-gradient(180deg, rgba(198,40,40,0.12), rgba(198,40,40,0));
+}}
+
+.app-title {{
+    font-size: 2.4rem;
+    font-weight: 700;
+    margin-bottom: 0.15rem;
+    color: var(--primary-color);
+}}
+
+.app-subtitle {{
+    color: var(--accent-color);
+    font-size: 1.1rem;
+    margin-top: 0;
+    margin-bottom: 0.6rem;
+}}
+
+.app-description {{
+    color: #4a4a4a;
+    font-size: 1.0rem;
+    line-height: 1.55rem;
+}}
+
+.stTabs [data-baseweb="tab"] {{
+    color: var(--accent-color);
+    font-weight: 600;
+}}
+
+.stTabs [data-baseweb="tab"]:hover {{
+    color: var(--primary-color);
+    background-color: rgba(198, 40, 40, 0.08);
+}}
+
+.stTabs [data-baseweb="tab"][aria-selected="true"] {{
+    color: var(--primary-color);
+    border-bottom: 3px solid var(--primary-color);
+}}
+
+[data-testid="stMetricValue"] {{
+    color: var(--primary-color);
+}}
+
+[data-testid="stMetricLabel"] {{
+    color: #5c5c5c;
+}}
+
+.stRadio > div {{
+    background-color: rgba(15,76,129,0.07);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+}}
+
+.stRadio [data-baseweb="radio"] label span {{
+    font-weight: 600;
+    color: var(--accent-color);
+}}
+
+.stRadio [data-baseweb="radio"] input:checked + span {{
+    color: var(--primary-color);
+}}
+
+.stButton>button {{
+    background-color: var(--primary-color);
+    color: #ffffff;
+    font-weight: 600;
+    border: none;
+    box-shadow: 0 6px 16px rgba(198, 40, 40, 0.25);
+}}
+
+.stButton>button:hover {{
+    background-color: #a12020;
+}}
+</style>
+"""
 
 # =========================
 # Configuración de la app
 # =========================
 st.set_page_config(page_title="SIAF Dashboard - Peru Compras", layout="wide")
-st.title("SIAF Dashboard - Peru Compras")
+st.markdown(APP_CSS, unsafe_allow_html=True)
+
+header_col_logo, header_col_text = st.columns([1, 4])
+with header_col_logo:
+    st.image(LOGO_IMAGE, width=120)
+with header_col_text:
+    st.markdown("<h1 class='app-title'>SIAF Dashboard - Perú Compras</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='app-subtitle'>Seguimiento diario del avance de ejecución presupuestal</p>",
+        unsafe_allow_html=True,
+    )
 
 st.markdown(
-    "Carga el **Excel SIAF** y obtén resúmenes de **PIA, PIM, Certificado, Comprometido, Devengado, Saldo PIM y % Avance**. "
-    "Lee por defecto **A:CH** (base hasta CI). "
-    "Construye el **clasificador concatenado** y lo **normaliza para que siempre comience con `2.`**; además agrega una **descripción jerárquica**. "
-    "Incluye filtros, pivotes, serie mensual y descarga a Excel."
+    "<p class='app-description'>Carga el <strong>Excel SIAF</strong> para analizar <strong>PIA, PIM, Certificado, Comprometido, Devengado, Saldo PIM y % de avance</strong>. "
+    "La aplicación asegura la lectura completa hasta CI, construye clasificadores jerárquicos estandarizados y ofrece vistas dinámicas con descargas.</p>",
+    unsafe_allow_html=True,
 )
 
 # =========================
 # Sidebar / parámetros
 # =========================
 with st.sidebar:
+    st.image(LOGO_IMAGE, width=140)
+    st.markdown("<h3 style='color: var(--primary-color); margin-top: 0.5rem;'>Panel de control</h3>", unsafe_allow_html=True)
     st.header("Parámetros de lectura")
     uploaded = st.file_uploader("Archivo SIAF (.xlsx)", type=["xlsx"])
     usecols = st.text_input(
@@ -1111,15 +1241,17 @@ with tab_reporte:
                     reporte_siaf_df.sort_values("orden", kind="stable")
                     .drop(columns=["orden", "nivel"], errors="ignore")
                 )
-                reporte_siaf_df = reporte_siaf_df[[
-                    "Centro de costo / Genérica de Gasto / Específica de Gasto",
-                    "AVANCE DE EJECUCIÓN ACUMULADO",
-                    "PIM",
-                    "CERTIFICADO",
-                    "COMPROMETIDO",
-                    "DEVENGADO",
-                    "% AVANCE DEV /PIM",
-                ]]
+                reporte_siaf_df = reporte_siaf_df[
+                    [
+                        "Centro de costo / Genérica de Gasto / Específica de Gasto",
+                        "AVANCE DE EJECUCIÓN ACUMULADO",
+                        "PIM",
+                        "CERTIFICADO",
+                        "COMPROMETIDO",
+                        "DEVENGADO",
+                        "% AVANCE DEV /PIM",
+                    ]
+                ]
             else:
                 reporte_siaf_df = pd.DataFrame(
                     columns=[
