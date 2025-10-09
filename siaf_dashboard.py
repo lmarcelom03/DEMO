@@ -970,6 +970,13 @@ if all(col in df_view.columns for col in ["sec_func", "generica", "especifica_de
                 pivot_table = pivot_table.reindex(columns=ordered_columns)
                 pivot_table = pivot_table.loc[:, (pivot_table != "").any(axis=0)]
                 pivot_table.columns.name = "especifica_det"
+
+                # Streamlit/pyarrow requires 2D tables with simple columns; flatten the index and
+                # make sure every cell is rendered as a plain string to avoid ArrowInvalid errors.
+                pivot_table = pivot_table.applymap(lambda value: "" if pd.isna(value) else str(value))
+                pivot_table = pivot_table.reset_index()
+                pivot_table.columns = [str(col) for col in pivot_table.columns]
+
                 st.dataframe(pivot_table, use_container_width=True)
     else:
         st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
@@ -1134,3 +1141,4 @@ st.download_button(
     file_name="siaf_resumen_avance.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
