@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import base64
+import importlib.util
 import io
 import re
 import smtplib
@@ -16,6 +17,8 @@ import streamlit as st
 PRIMARY_COLOR = "#c62828"
 SECONDARY_COLOR = "#fbe9e7"
 ACCENT_COLOR = "#0f4c81"
+
+XLSXWRITER_AVAILABLE = importlib.util.find_spec("xlsxwriter") is not None
 
 LOGO_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAIJklEQVR4nO3cO4uUVxjA8We8bLISIiRxC1Mu2AleChEE11L8ALZi6WewtrK1URsr/QZWgo2VjSBWYiw0"
@@ -916,11 +919,18 @@ def to_excel_download(
 ):
     output = io.BytesIO()
 
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        workbook = writer.book
-        header_format = workbook.add_format({"bold": True, "bg_color": "#c62828", "font_color": "#ffffff"})
-        currency_format = workbook.add_format({"num_format": "#,##0.00"})
-        percent_format = workbook.add_format({"num_format": "0.00%"})
+    preferred_engine = "xlsxwriter" if XLSXWRITER_AVAILABLE else "openpyxl"
+
+    with pd.ExcelWriter(output, engine=preferred_engine) as writer:
+        use_xlsxwriter = preferred_engine == "xlsxwriter"
+        workbook = writer.book if use_xlsxwriter else None
+        header_format = None
+        currency_format = None
+        percent_format = None
+        if use_xlsxwriter:
+            header_format = workbook.add_format({"bold": True, "bg_color": "#c62828", "font_color": "#ffffff"})
+            currency_format = workbook.add_format({"num_format": "#,##0.00"})
+            percent_format = workbook.add_format({"num_format": "0.00%"})
 
         def _sanitize_table_name(name: str) -> str:
             clean = re.sub(r"[^0-9A-Za-z_]", "", name)[:20]
@@ -934,40 +944,41 @@ def to_excel_download(
             worksheet = writer.sheets[sheet_name]
 
             max_row, max_col = df.shape
-            table_name = f"Tbl{_sanitize_table_name(sheet_name)}"
-            worksheet.add_table(
-                0,
-                0,
-                max_row,
-                max_col - 1,
-                {
-                    "name": table_name,
-                    "style": "Table Style Medium 9",
-                    "columns": [{"header": col} for col in df.columns],
-                },
-            )
+            if use_xlsxwriter:
+                table_name = f"Tbl{_sanitize_table_name(sheet_name)}"
+                worksheet.add_table(
+                    0,
+                    0,
+                    max_row,
+                    max_col - 1,
+                    {
+                        "name": table_name,
+                        "style": "Table Style Medium 9",
+                        "columns": [{"header": col} for col in df.columns],
+                    },
+                )
 
-            worksheet.set_row(0, None, header_format)
+                worksheet.set_row(0, None, header_format)
 
-            for col_idx, column_name in enumerate(df.columns):
-                if pd.api.types.is_numeric_dtype(df.iloc[:, col_idx]):
-                    fmt = percent_format if isinstance(column_name, str) and column_name.endswith("%") else currency_format
-                    worksheet.set_column(col_idx, col_idx, None, fmt)
-
-            if add_chart and max_row > 0 and max_col > 1:
-                chart = workbook.add_chart({"type": "column"})
-                categories = [sheet_name, 1, 0, max_row, 0]
-                for col_idx in range(1, max_col):
+                for col_idx, column_name in enumerate(df.columns):
                     if pd.api.types.is_numeric_dtype(df.iloc[:, col_idx]):
-                        chart.add_series(
-                            {
-                                "name": [sheet_name, 0, col_idx],
-                                "categories": categories,
-                                "values": [sheet_name, 1, col_idx, max_row, col_idx],
-                            }
-                        )
-                chart.set_title({"name": sheet_name})
-                worksheet.insert_chart(1, max_col + 1, chart, {"x_scale": 1.1, "y_scale": 1.1})
+                        fmt = percent_format if isinstance(column_name, str) and column_name.endswith("%") else currency_format
+                        worksheet.set_column(col_idx, col_idx, None, fmt)
+
+                if add_chart and max_row > 0 and max_col > 1:
+                    chart = workbook.add_chart({"type": "column"})
+                    categories = [sheet_name, 1, 0, max_row, 0]
+                    for col_idx in range(1, max_col):
+                        if pd.api.types.is_numeric_dtype(df.iloc[:, col_idx]):
+                            chart.add_series(
+                                {
+                                    "name": [sheet_name, 0, col_idx],
+                                    "categories": categories,
+                                    "values": [sheet_name, 1, col_idx, max_row, col_idx],
+                                }
+                            )
+                    chart.set_title({"name": sheet_name})
+                    worksheet.insert_chart(1, max_col + 1, chart, {"x_scale": 1.1, "y_scale": 1.1})
 
             return worksheet
 
@@ -1829,6 +1840,10 @@ with tab_reporte:
 
 with tab_descarga:
     st.header("Descarga de reportes")
+    if not XLSXWRITER_AVAILABLE:
+        st.warning(
+            "No se encontró la librería `xlsxwriter`. El Excel se generará sin tablas ni gráficos embebidos."
+        )
     buf = to_excel_download(
         resumen=round_numeric_for_reporting(pivot.copy()),
         avance=round_numeric_for_reporting(avance_series.copy()),
