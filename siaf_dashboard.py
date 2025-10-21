@@ -899,6 +899,7 @@ def _attach_pivot_table(
         name=table_name,
         cacheId=cache_id,
         dataOnRows=False,
+        dataCaption="Valores",
         rowGrandTotals=True,
         colGrandTotals=True,
         location=Location(ref="A3", firstHeaderRow=3, firstDataRow=4, firstDataCol=1),
