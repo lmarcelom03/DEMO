@@ -1,18 +1,16 @@
+# -*- coding: utf-8 -*-
+
 import base64
 import io
 import re
 import smtplib
 from email.message import EmailMessage
+from typing import Dict, List, Tuple
 
 import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
-from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
-from openpyxl.utils import get_column_letter
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.worksheet.table import Table, TableStyleInfo
 
 PRIMARY_COLOR = "#c62828"
 SECONDARY_COLOR = "#fbe9e7"
@@ -165,8 +163,8 @@ with st.sidebar:
     uploaded = st.file_uploader("Archivo SIAF (.xlsx)", type=["xlsx"])
     usecols = st.text_input(
         "Rango de columnas (Excel)",
-        "A:CH",
-        help="Lectura fija para asegurar columnas CI–EC",
+        "A:DV",
+        help="Lectura fija para asegurar columnas CI–EC y programación mensual",
         disabled=True,
     )
     sheet_name = st.text_input("Nombre de hoja (opcional)", "", help="Déjalo vacío para autodetección.")
@@ -247,6 +245,7 @@ AMOUNT_KEYWORDS = (
     "necesario",
     "estimado",
     "proyeccion",
+    "programado",
 )
 EXCLUDE_ROUND_COLS = {"mes", "rank_acum", "rank_mes", "n"}
 Z_SCORE_95 = 1.96
@@ -321,6 +320,8 @@ def compose_email_body(template, row, meta_avance):
         "pim": _safe_float(row.get("mto_pim", 0.0)),
         "devengado": _safe_float(row.get("devengado", 0.0)),
         "devengado_mes": _safe_float(row.get("devengado_mes", 0.0)),
+        "programado": _safe_float(row.get("programado_mes", 0.0)),
+        "avance_programado": _safe_float(row.get("avance_programado_%", 0.0)),
         "meta": _safe_float(meta_avance),
     }
     return template.format(**context)
@@ -348,18 +349,73 @@ def autodetect_sheet_and_header(xls, excel_bytes, usecols, user_sheet, header_gu
     return xls.sheet_names[0], header_guess - 1
 
 
+def _flatten_headers(columns):
+    """Normaliza encabezados (incluyendo multinivel) en snake_case en minúsculas."""
+
+    flattened: List[str] = []
+    seen_counts: Dict[str, int] = {}
+
+    for col in columns:
+        if isinstance(col, tuple):
+            parts: List[str] = []
+            for level in col:
+                if level is None or (isinstance(level, float) and np.isnan(level)):
+                    continue
+                text = str(level).strip()
+                if not text or text.lower() == "nan":
+                    continue
+                parts.append(text)
+            label = " ".join(parts)
+        else:
+            if col is None or (isinstance(col, float) and np.isnan(col)):
+                label = ""
+            else:
+                label = str(col).strip()
+
+        if not label:
+            label = "col"
+
+        normalized = re.sub(r"\s+", "_", label)
+        normalized = normalized.replace("__", "_")
+        normalized = normalized.strip("_")
+        normalized = normalized.lower() or "col"
+
+        count = seen_counts.get(normalized, 0)
+        seen_counts[normalized] = count + 1
+        if count:
+            normalized = f"{normalized}_{count+1}"
+
+        flattened.append(normalized)
+
+    return flattened
+
+
 def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=True):
     xls = pd.ExcelFile(excel_bytes)
     if autodetect:
         s, hdr = autodetect_sheet_and_header(xls, excel_bytes, usecols, sheet_name, header_row_excel)
-        df = pd.read_excel(excel_bytes, sheet_name=s, header=hdr, usecols=usecols)
     else:
         hdr = header_row_excel - 1
         s = sheet_name if sheet_name else xls.sheet_names[0]
+
+    multi_header_df = None
+    try:
+        multi_header_df = pd.read_excel(
+            excel_bytes,
+            sheet_name=s,
+            header=[hdr, hdr + 1],
+            usecols=usecols,
+        )
+    except Exception:
+        pass
+
+    if multi_header_df is not None:
+        df = multi_header_df
+    else:
         df = pd.read_excel(excel_bytes, sheet_name=s, header=hdr, usecols=usecols)
 
     df = df.dropna(how="all").dropna(axis=1, how="all")
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    df.columns = _flatten_headers(df.columns)
     return df, s
 
 # =========================
@@ -367,6 +423,126 @@ def load_data(excel_bytes, usecols, sheet_name, header_row_excel, autodetect=Tru
 # =========================
 def find_monthly_columns(df, prefix):
     return [f"{prefix}{i:02d}" for i in range(1, 13) if f"{prefix}{i:02d}" in df.columns]
+
+
+MONTH_NAME_ALIASES = {
+    1: ("1", "01", "ene", "enero", "jan", "january"),
+    2: ("2", "02", "feb", "febrero", "febr", "february"),
+    3: ("3", "03", "mar", "marzo", "march"),
+    4: ("4", "04", "abr", "abril", "april"),
+    5: ("5", "05", "may", "mayo"),
+    6: ("6", "06", "jun", "junio", "june"),
+    7: ("7", "07", "jul", "julio", "july"),
+    8: ("8", "08", "ago", "agosto", "aug", "august"),
+    9: ("9", "09", "set", "sept", "septiembre", "sep", "september"),
+    10: ("10", "oct", "octubre", "october"),
+    11: ("11", "nov", "noviembre", "november"),
+    12: ("12", "dic", "diciembre", "dec", "december"),
+}
+MONTH_NAME_LABELS = {
+    1: "Enero",
+    2: "Febrero",
+    3: "Marzo",
+    4: "Abril",
+    5: "Mayo",
+    6: "Junio",
+    7: "Julio",
+    8: "Agosto",
+    9: "Setiembre",
+    10: "Octubre",
+    11: "Noviembre",
+    12: "Diciembre",
+}
+PROGRAM_MATCH_TOKENS = ("prog", "program", "calendario", "cronograma")
+PROGRAM_EXCLUDE_TOKENS = ("mto", "pia", "pim", "certificado", "compro", "girado", "devenga")
+
+
+def _normalize_label(label) -> str:
+    if label is None or (isinstance(label, float) and np.isnan(label)):
+        return ""
+    return re.sub(r"[^a-z0-9]", "", str(label).lower())
+
+
+def detect_programado_columns(df: pd.DataFrame) -> Dict[int, str]:
+    """Infer the monthly programming columns (1-12) from the dataframe headers."""
+
+    month_candidates: Dict[int, List[Tuple[str, bool]]] = {i: [] for i in range(1, 13)}
+    fallback: List[str] = []
+
+    for col in df.columns:
+        series = df[col]
+        if not pd.api.types.is_numeric_dtype(series):
+            continue
+        normalized = _normalize_label(col)
+        if not normalized:
+            continue
+        contains_program = any(token in normalized for token in PROGRAM_MATCH_TOKENS)
+        month_id = None
+        for idx, aliases in MONTH_NAME_ALIASES.items():
+            if any(alias in normalized for alias in aliases):
+                month_id = idx
+                break
+        if month_id is not None:
+            month_candidates[month_id].append((col, contains_program))
+        elif contains_program:
+            fallback.append(col)
+
+    mapping: Dict[int, str] = {}
+    for month_id, options in month_candidates.items():
+        if not options:
+            continue
+        options_sorted = sorted(options, key=lambda item: (not item[1], len(str(item[0]))))
+        mapping[month_id] = options_sorted[0][0]
+
+    if len(mapping) < 12:
+        numeric_columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+        ordered_candidates: List[str] = []
+        for col in numeric_columns:
+            if col in mapping.values():
+                continue
+            normalized = _normalize_label(col)
+            if any(token in normalized for token in PROGRAM_EXCLUDE_TOKENS):
+                continue
+            ordered_candidates.append(col)
+        for col in fallback:
+            if col not in ordered_candidates and col not in mapping.values():
+                ordered_candidates.append(col)
+
+        for month_id in range(1, 13):
+            if month_id in mapping:
+                continue
+            if not ordered_candidates:
+                break
+            mapping[month_id] = ordered_candidates.pop(0)
+
+    return mapping
+
+
+def attach_programado_metrics(df: pd.DataFrame, month: int):
+    """Attach programado_mes and avance_programado_% columns based on detected schedule."""
+
+    df = df.copy()
+    month_map = detect_programado_columns(df)
+    month_key = int(month) if pd.notna(month) else None
+    source_col = month_map.get(month_key) if month_key in month_map else None
+
+    if source_col and source_col in df.columns:
+        program_series = pd.to_numeric(df[source_col], errors="coerce").fillna(0.0)
+    else:
+        program_series = pd.Series(0.0, index=df.index, dtype=float)
+        source_col = None
+
+    df["programado_mes"] = program_series.astype(float)
+    devengado_mes = pd.to_numeric(df.get("devengado_mes", 0.0), errors="coerce").fillna(0.0).astype(float)
+    df["devengado_mes"] = devengado_mes
+
+    program_array = df["programado_mes"].to_numpy(dtype=float, copy=True)
+    dev_array = devengado_mes.to_numpy(dtype=float, copy=True)
+    ratio = np.zeros_like(program_array)
+    np.divide(dev_array, program_array, out=ratio, where=program_array > 0)
+    df["avance_programado_%"] = ratio * 100.0
+
+    return df, month_map, source_col
 
 
 def ensure_ci_ec_steps(df, month, umbral):
@@ -521,6 +697,10 @@ def pivot_exec(df, group_col, dev_cols):
         cols.append("mto_compro_anual")
     if dev_cols:
         cols.append("devengado")
+    if "devengado_mes" in df.columns:
+        cols.append("devengado_mes")
+    if "programado_mes" in df.columns:
+        cols.append("programado_mes")
 
     if "devengado" not in df.columns and dev_cols:
         df = df.copy()
@@ -531,8 +711,197 @@ def pivot_exec(df, group_col, dev_cols):
     if "mto_pim" in g.columns and "devengado" in g.columns:
         g["saldo_pim"] = g["mto_pim"] - g["devengado"]
         g["avance_%"] = np.where(g["mto_pim"] > 0, g["devengado"] / g["mto_pim"] * 100.0, 0.0)
+    if "mto_pim" in g.columns and "devengado_mes" in g.columns:
+        g["avance_mes_%"] = np.where(g["mto_pim"] > 0, g["devengado_mes"] / g["mto_pim"] * 100.0, 0.0)
+    if "programado_mes" in g.columns and "devengado_mes" in g.columns:
+        g["avance_programado_%"] = np.where(
+            g["programado_mes"] > 0,
+            g["devengado_mes"] / g["programado_mes"] * 100.0,
+            0.0,
+        )
 
     return g
+
+
+def _attach_pivot_table(
+    workbook_buffer: io.BytesIO,
+    source_sheet: str,
+    target_sheet: str,
+    table_name: str,
+    row_fields: List[str],
+    value_fields: List[Dict[str, object]],
+):
+    """Add an Excel pivot table using openpyxl after the workbook is written by XlsxWriter."""
+
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.pivot.cache import CacheDefinition, CacheField, CacheSource, WorksheetSource, SharedItems
+        from openpyxl.pivot.table import (
+            DataField,
+            Location,
+            PivotField,
+            PivotTableStyle,
+            RowColField,
+            RowColItem,
+            TableDefinition,
+        )
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return workbook_buffer
+
+    workbook_buffer.seek(0)
+    try:
+        wb = load_workbook(workbook_buffer)
+    except Exception:
+        workbook_buffer.seek(0)
+        return workbook_buffer
+
+    if source_sheet not in wb.sheetnames:
+        workbook_buffer.seek(0)
+        return workbook_buffer
+
+    ws_source = wb[source_sheet]
+    max_row = ws_source.max_row
+    max_col = ws_source.max_column
+
+    if max_row <= 1 or max_col == 0:
+        workbook_buffer.seek(0)
+        return workbook_buffer
+
+    headers = list(next(ws_source.iter_rows(min_row=1, max_row=1, values_only=True)))
+    header_index = {name: idx for idx, name in enumerate(headers) if name}
+
+    if not all(field in header_index for field in row_fields):
+        workbook_buffer.seek(0)
+        return workbook_buffer
+
+    resolved_values = [vf for vf in value_fields if vf.get("field") in header_index]
+    if not resolved_values:
+        workbook_buffer.seek(0)
+        return workbook_buffer
+
+    if target_sheet in wb.sheetnames:
+        del wb[target_sheet]
+    ws_pivot = wb.create_sheet(target_sheet)
+
+    data_ref = f"'{source_sheet}'!$A$1:${get_column_letter(max_col)}${max_row}"
+
+    cache_fields = []
+    for idx, header in enumerate(headers):
+        if header is None:
+            continue
+        column_cells = list(
+            ws_source.iter_cols(
+                min_col=idx + 1,
+                max_col=idx + 1,
+                min_row=2,
+                max_row=max_row,
+                values_only=True,
+            )
+        )
+        column_values = []
+        if column_cells:
+            column_values = [cell for cell in column_cells[0] if cell is not None]
+        contains_number = any(isinstance(v, (int, float)) for v in column_values)
+        contains_string = any(isinstance(v, str) for v in column_values)
+        shared_items = SharedItems(
+            count=len(column_values),
+            containsNumber=contains_number or None,
+            containsString=contains_string or None,
+            containsBlank=True,
+        )
+        cache_fields.append(CacheField(name=str(header), sharedItems=shared_items))
+
+    cache = CacheDefinition(
+        cacheSource=CacheSource(
+            type="worksheet",
+            worksheetSource=WorksheetSource(ref=data_ref, sheet=source_sheet),
+        ),
+        recordCount=max_row - 1,
+        cacheFields=tuple(cache_fields),
+    )
+
+    cache_id = len(wb._pivots) + 1 or 1
+    cache.cacheId = cache_id
+    cache._id = cache_id
+
+    pivot_fields = []
+    value_field_names = {vf["field"] for vf in resolved_values}
+    row_indexes = [header_index[field] for field in row_fields]
+
+    for idx, header in enumerate(headers):
+        if header is None:
+            continue
+        pf = PivotField(name=str(header))
+        if idx in row_indexes:
+            pf.axis = "axisRow"
+            pf.defaultSubtotal = True
+        elif header in value_field_names:
+            pf.dataField = True
+        else:
+            pf.defaultSubtotal = False
+        pivot_fields.append(pf)
+
+    row_fields_def = [RowColField(x=idx) for idx in row_indexes]
+    row_items = [RowColItem(t="grand")]
+
+    data_fields = []
+    try:
+        from openpyxl.styles.numbers import BUILTIN_FORMATS
+    except Exception:
+        BUILTIN_FORMATS = {}
+
+    for value in resolved_values:
+        field_name = value["field"]
+        field_idx = header_index[field_name]
+        subtotal = value.get("function", "sum")
+        fmt_string = value.get("num_format")
+        num_fmt_id = None
+        if fmt_string:
+            for fmt_key, fmt_val in BUILTIN_FORMATS.items():
+                try:
+                    matches = fmt_val == fmt_string
+                except Exception:
+                    matches = False
+                if matches:
+                    try:
+                        num_fmt_id = int(fmt_key)
+                    except Exception:
+                        num_fmt_id = None
+                    if num_fmt_id is not None:
+                        break
+        df = DataField(
+            name=value.get("name", field_name),
+            fld=field_idx,
+            subtotal=subtotal,
+            numFmtId=num_fmt_id,
+        )
+        data_fields.append(df)
+
+    pivot_style = PivotTableStyle(name="PivotStyleMedium9", showRowHeaders=True, showColHeaders=True, showRowStripes=True)
+
+    pivot = TableDefinition(
+        name=table_name,
+        cacheId=cache_id,
+        dataOnRows=False,
+        rowGrandTotals=True,
+        colGrandTotals=True,
+        location=Location(ref="A3", firstHeaderRow=3, firstDataRow=4, firstDataCol=1),
+        pivotFields=tuple(pivot_fields),
+        rowFields=tuple(row_fields_def),
+        rowItems=tuple(row_items),
+        dataFields=tuple(data_fields),
+        pivotTableStyleInfo=pivot_style,
+    )
+
+    pivot.cache = cache
+    ws_pivot.add_pivot(pivot)
+    wb._pivots.append(pivot)
+
+    updated_buffer = io.BytesIO()
+    wb.save(updated_buffer)
+    updated_buffer.seek(0)
+    return updated_buffer
 
 
 def to_excel_download(
@@ -542,47 +911,107 @@ def to_excel_download(
     ritmo=None,
     leaderboard=None,
     reporte_siaf=None,
+    reporte_siaf_pivot_source=None,
 ):
-    wb = Workbook()
-    wb.remove(wb.active)
-
-    def add_table_with_chart(df, sheet_name):
-        ws = wb.create_sheet(sheet_name)
-        for r in dataframe_to_rows(df, index=False, header=True):
-            ws.append(r)
-        if ws.max_row <= 1:
-            return
-        ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
-        tbl = Table(displayName=f"Tbl{sheet_name[:20].replace(' ','_')}", ref=ref)
-        tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
-        ws.add_table(tbl)
-
-        num_cols = [i + 2 for i, c in enumerate(df.columns[1:]) if pd.api.types.is_numeric_dtype(df[c])]
-        if num_cols:
-            chart = BarChart()
-            data = Reference(ws, min_col=2, min_row=1, max_row=ws.max_row, max_col=max(num_cols))
-            cats = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
-            chart.add_data(data, titles_from_data=True)
-            chart.set_categories(cats)
-            chart.title = sheet_name
-            chart.height = 7
-            chart.width = 15
-            ws.add_chart(chart, f"{get_column_letter(ws.max_column + 2)}2")
-
-    add_table_with_chart(resumen, "Resumen")
-    add_table_with_chart(avance, "Avance")
-    if proyeccion is not None and not proyeccion.empty:
-        add_table_with_chart(proyeccion, "Proyeccion")
-    if ritmo is not None and not ritmo.empty:
-        add_table_with_chart(ritmo, "Ritmo")
-    if leaderboard is not None and not leaderboard.empty:
-        add_table_with_chart(leaderboard, "Leaderboard")
-    if reporte_siaf is not None and not reporte_siaf.empty:
-        add_table_with_chart(reporte_siaf, "Reporte_SIAF")
-
     output = io.BytesIO()
-    wb.save(output)
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        header_format = workbook.add_format({"bold": True, "bg_color": "#c62828", "font_color": "#ffffff"})
+        currency_format = workbook.add_format({"num_format": "#,##0.00"})
+        percent_format = workbook.add_format({"num_format": "0.00%"})
+
+        def _sanitize_table_name(name: str) -> str:
+            clean = re.sub(r"[^0-9A-Za-z_]", "", name)[:20]
+            return clean or "Tabla"
+
+        def add_sheet_with_table(df: pd.DataFrame, sheet_name: str, add_chart: bool = True):
+            if df is None or df.empty:
+                return None
+
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            worksheet = writer.sheets[sheet_name]
+
+            max_row, max_col = df.shape
+            table_name = f"Tbl{_sanitize_table_name(sheet_name)}"
+            worksheet.add_table(
+                0,
+                0,
+                max_row,
+                max_col - 1,
+                {
+                    "name": table_name,
+                    "style": "Table Style Medium 9",
+                    "columns": [{"header": col} for col in df.columns],
+                },
+            )
+
+            worksheet.set_row(0, None, header_format)
+
+            for col_idx, column_name in enumerate(df.columns):
+                if pd.api.types.is_numeric_dtype(df.iloc[:, col_idx]):
+                    fmt = percent_format if isinstance(column_name, str) and column_name.endswith("%") else currency_format
+                    worksheet.set_column(col_idx, col_idx, None, fmt)
+
+            if add_chart and max_row > 0 and max_col > 1:
+                chart = workbook.add_chart({"type": "column"})
+                categories = [sheet_name, 1, 0, max_row, 0]
+                for col_idx in range(1, max_col):
+                    if pd.api.types.is_numeric_dtype(df.iloc[:, col_idx]):
+                        chart.add_series(
+                            {
+                                "name": [sheet_name, 0, col_idx],
+                                "categories": categories,
+                                "values": [sheet_name, 1, col_idx, max_row, col_idx],
+                            }
+                        )
+                chart.set_title({"name": sheet_name})
+                worksheet.insert_chart(1, max_col + 1, chart, {"x_scale": 1.1, "y_scale": 1.1})
+
+            return worksheet
+
+        add_sheet_with_table(resumen, "Resumen")
+        add_sheet_with_table(avance, "Avance")
+
+        if proyeccion is not None and not proyeccion.empty:
+            add_sheet_with_table(proyeccion, "Proyeccion")
+        if ritmo is not None and not ritmo.empty:
+            add_sheet_with_table(ritmo, "Ritmo")
+        if leaderboard is not None and not leaderboard.empty:
+            add_sheet_with_table(leaderboard, "Leaderboard")
+
+        pivot_source_sheet = None
+        pivot_table_config = None
+        if reporte_siaf is not None and not reporte_siaf.empty:
+            add_sheet_with_table(reporte_siaf, "Reporte_SIAF")
+
+        if reporte_siaf_pivot_source is not None and not reporte_siaf_pivot_source.empty:
+            pivot_source_sheet = "Reporte_SIAF_Fuente"
+            add_sheet_with_table(reporte_siaf_pivot_source, pivot_source_sheet, add_chart=False)
+            pivot_table_config = {
+                "rows": ["sec_func", "Generica", "clasificador_cod-concepto"],
+                "values": [
+                    {"field": "PIM", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "COMPROMETIDO", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "DEVENGADO", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "DEVENGADO MES", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "PROGRAMADO MES", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "Avance%", "function": "average", "num_format": "0.00%"},
+                    {"field": "AvanceProgramado%", "function": "average", "num_format": "0.00%"},
+                ],
+            }
+
     output.seek(0)
+    if pivot_source_sheet and pivot_table_config:
+        output = _attach_pivot_table(
+            output,
+            pivot_source_sheet,
+            "Reporte_SIAF_Pivot",
+            "PivotReporteSIAF",
+            pivot_table_config["rows"],
+            pivot_table_config["values"],
+        )
     return output
 
 # =========================
@@ -634,6 +1063,36 @@ df_f = df[mask].copy()
 # =========================
 df_proc = ensure_ci_ec_steps(df_f, current_month, riesgo_umbral)
 df_proc = build_classifier_columns(df_proc)
+df_proc, program_month_map, program_source_col = attach_programado_metrics(df_proc, current_month)
+
+if program_month_map:
+    month_label = MONTH_NAME_LABELS.get(int(current_month), f"Mes {int(current_month):02d}")
+    if program_source_col:
+        st.caption(
+            f"Programación del mes {int(current_month):02d} ({month_label}) tomada de la columna "
+            f"'{program_source_col}'."
+        )
+    else:
+        st.caption(
+            f"No se encontró columna de programación para el mes {int(current_month):02d} ({month_label}); se "
+            "asumirá 0."
+        )
+
+    detected_pairs = [
+        (MONTH_NAME_LABELS.get(month, f"Mes {month:02d}"), column)
+        for month, column in sorted(program_month_map.items())
+        if column
+    ]
+    if detected_pairs:
+        items = "".join(
+            f"<li><strong>{label}</strong>: <code>{column}</code></li>" for label, column in detected_pairs
+        )
+        st.markdown(
+            f"<small>Columnas detectadas de programación mensual:<ul>{items}</ul></small>",
+            unsafe_allow_html=True,
+        )
+else:
+    st.caption("No se detectaron columnas de programación mensual en el archivo cargado.")
 
 # Totales globales para el resumen ejecutivo
 _tot_pia = float(df_proc.get("mto_pia", 0).sum())
@@ -665,7 +1124,8 @@ _ci_cols = [
     "clasificador_cod", "clasificador_desc",
     "generica","subgenerica","subgenerica_det","especifica","especifica_det",
     "mto_pia","mto_pim","mto_certificado","mto_compro_anual",
-    "devengado_mes","devengado","saldo_pim","avance_%","riesgo_devolucion"
+    "devengado_mes","programado_mes","devengado","saldo_pim",
+    "avance_%","avance_programado_%","riesgo_devolucion"
 ]
 _ci_cols = [c for c in _ci_cols if c in df_view.columns]
 df_ci = df_view[_ci_cols].head(300) if _ci_cols else pd.DataFrame()
@@ -678,6 +1138,7 @@ _consol_cols = [
         "mto_certificado",
         "mto_compro_anual",
         "devengado_mes",
+        "programado_mes",
         "devengado",
         "saldo_pim",
     ]
@@ -693,6 +1154,12 @@ if _consol_cols:
         consolidado["avance_%"] = np.where(
             consolidado["mto_pim"] > 0,
             consolidado["devengado"] / consolidado["mto_pim"] * 100.0,
+            0.0,
+        )
+    if "programado_mes" in consolidado.columns and "devengado_mes" in consolidado.columns:
+        consolidado["avance_programado_%"] = np.where(
+            consolidado["programado_mes"] > 0,
+            consolidado["devengado_mes"] / consolidado["programado_mes"] * 100.0,
             0.0,
         )
 
@@ -718,6 +1185,7 @@ ritmo_df = pd.DataFrame()
 leaderboard_df = pd.DataFrame()
 alert_df = pd.DataFrame()
 reporte_siaf_df = pd.DataFrame()
+reporte_siaf_pivot_source = pd.DataFrame()
 proyeccion_wide = pd.DataFrame()
 
 # Navegación por apartados
@@ -757,10 +1225,15 @@ with tab_agrup:
     pivot_display = round_numeric_for_reporting(pivot)
     fmt_pivot = build_style_formatters(pivot_display)
     pivot_style = pivot_display.style
-    if "avance_%" in pivot_display.columns:
+    highlight_cols = [
+        col
+        for col in ["avance_%", "avance_mes_%", "avance_programado_%"]
+        if col in pivot_display.columns
+    ]
+    if highlight_cols:
         pivot_style = pivot_style.applymap(
             lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-            subset=["avance_%"],
+            subset=highlight_cols,
         )
     if fmt_pivot:
         pivot_style = pivot_style.format(fmt_pivot)
@@ -774,10 +1247,11 @@ with tab_ci:
         df_ci_display = round_numeric_for_reporting(df_ci)
         fmt_ci = build_style_formatters(df_ci_display)
         ci_style = df_ci_display.style
-        if "avance_%" in df_ci_display.columns:
+        highlight_cols = [c for c in ["avance_%", "avance_programado_%"] if c in df_ci_display.columns]
+        if highlight_cols:
             ci_style = ci_style.applymap(
                 lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=["avance_%"],
+                subset=highlight_cols,
             )
         if fmt_ci:
             ci_style = ci_style.format(fmt_ci)
@@ -906,7 +1380,7 @@ with tab_gestion:
 
     st.header("Top áreas con menor avance")
     if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
-        agg_cols = ["mto_pim", "devengado", "devengado_mes"]
+        agg_cols = ["mto_pim", "devengado", "devengado_mes", "programado_mes"]
         if "mto_certificado" in df_view.columns:
             agg_cols.insert(1, "mto_certificado")
         agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
@@ -916,6 +1390,11 @@ with tab_gestion:
             agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
             agg_sec["avance_mes_%"] = np.where(
                 agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0,
+            )
+            agg_sec["avance_programado_%"] = np.where(
+                agg_sec["programado_mes"] > 0,
+                agg_sec["devengado_mes"] / agg_sec["programado_mes"] * 100.0,
+                0.0,
             )
             agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
             agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
@@ -932,7 +1411,14 @@ with tab_gestion:
             display_cols = ["rank_acum", "rank_mes", "sec_func", "mto_pim"]
             if "mto_certificado" in agg_sec.columns:
                 display_cols.append("mto_certificado")
-            display_cols.extend(["devengado", "avance_acum_%", "devengado_mes", "avance_mes_%"])
+            display_cols.extend([
+                "devengado",
+                "avance_acum_%",
+                "devengado_mes",
+                "programado_mes",
+                "avance_mes_%",
+                "avance_programado_%",
+            ])
             leaderboard_df = leaderboard_df[display_cols]
 
             leaderboard_display = round_numeric_for_reporting(leaderboard_df)
@@ -940,7 +1426,7 @@ with tab_gestion:
             highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
             leader_style = leaderboard_display.style.applymap(
                 highlight,
-                subset=["avance_acum_%", "avance_mes_%"],
+                subset=[c for c in ["avance_acum_%", "avance_mes_%", "avance_programado_%"] if c in leaderboard_display.columns],
             )
             if fmt_leader:
                 leader_style = leader_style.format(fmt_leader)
@@ -960,6 +1446,8 @@ with tab_gestion:
             "PIM: S/ {pim:,.2f}\n"
             "Devengado acumulado: S/ {devengado:,.2f}\n"
             "Devengado del mes: S/ {devengado_mes:,.2f}\n\n"
+            "Programado del mes: S/ {programado:,.2f}\n"
+            "Avance vs programado: {avance_programado:.2f}%\n\n"
             "La meta institucional vigente es {meta:.0f}%. Por favor revisen las acciones necesarias para mejorar la ejecución.\n\n"
             "Saludos,\n"
             "Equipo de Presupuesto"
@@ -980,7 +1468,11 @@ with tab_gestion:
         highlight_alert = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
         alert_style = alert_display.style.applymap(
             highlight_alert,
-            subset=[c for c in ["avance_acum_%", "avance_mes_%"] if c in alert_display.columns],
+            subset=[
+                c
+                for c in ["avance_acum_%", "avance_mes_%", "avance_programado_%"]
+                if c in alert_display.columns
+            ],
         )
         if fmt_alert:
             alert_style = alert_style.format(fmt_alert)
@@ -1082,6 +1574,7 @@ with tab_gestion:
 
 with tab_reporte:
     st.header("Reporte SIAF por área, genérica y específica detalle")
+    reporte_siaf_pivot_source = pd.DataFrame()
     if not all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
         st.info("Para el reporte SIAF se requieren las columnas sec_func, generica y especifica_det.")
     else:
@@ -1093,6 +1586,7 @@ with tab_reporte:
                 "mto_certificado",
                 "mto_compro_anual",
                 "devengado_mes",
+                "programado_mes",
                 "devengado",
                 "saldo_pim",
             ]
@@ -1138,7 +1632,8 @@ with tab_reporte:
                 "PIM": "mto_pim",
                 "CERTIFICADO": "mto_certificado",
                 "COMPROMETIDO": "mto_compro_anual",
-                "DEVENGADO": "devengado_mes",
+                "DEVENGADO MES": "devengado_mes",
+                "PROGRAMADO MES": "programado_mes",
             }
             for src in value_sources.values():
                 if src not in reporte_base.columns:
@@ -1147,6 +1642,42 @@ with tab_reporte:
             reporte_base = reporte_base[
                 reporte_base["clasificador_cod_concepto"].fillna("").astype(str).str.strip() != ""
             ].copy()
+
+            if not reporte_base.empty:
+                def _safe_numeric(col_name):
+                    if col_name in reporte_base.columns:
+                        return reporte_base[col_name].fillna(0.0).astype(float)
+                    return pd.Series(0.0, index=reporte_base.index, dtype=float)
+
+                devengado_acum = _safe_numeric("devengado")
+                devengado_mes_series = _safe_numeric("devengado_mes")
+                programado_mes_series = _safe_numeric("programado_mes")
+                pivot_source_df = pd.DataFrame(
+                    {
+                        "sec_func": reporte_base["sec_func"].fillna("").astype(str),
+                        "Generica": reporte_base["generica"].fillna("").astype(str),
+                        "clasificador_cod-concepto": reporte_base["clasificador_cod_concepto"].fillna("").astype(str),
+                        "PIM": _safe_numeric("mto_pim"),
+                        "CERTIFICADO": _safe_numeric("mto_certificado"),
+                        "COMPROMETIDO": _safe_numeric("mto_compro_anual"),
+                        "DEVENGADO": devengado_acum,
+                        "DEVENGADO MES": devengado_mes_series,
+                        "PROGRAMADO MES": programado_mes_series,
+                    }
+                )
+                pivot_source_df["Avance%"] = np.where(
+                    pivot_source_df["PIM"] > 0,
+                    devengado_acum / pivot_source_df["PIM"],
+                    0.0,
+                )
+                pivot_source_df["AvanceProgramado%"] = np.where(
+                    pivot_source_df["PROGRAMADO MES"] > 0,
+                    devengado_mes_series / pivot_source_df["PROGRAMADO MES"],
+                    0.0,
+                )
+                reporte_siaf_pivot_source = pivot_source_df
+            else:
+                reporte_siaf_pivot_source = pd.DataFrame()
 
             def _label_or_default(value, fallback):
                 text = "" if pd.isna(value) else str(value).strip()
@@ -1237,6 +1768,13 @@ with tab_reporte:
                     reporte_siaf_df["AVANCE DE EJECUCIÓN ACUMULADO"].astype(float) / reporte_siaf_df["PIM"].astype(float) * 100.0,
                     0.0,
                 )
+                reporte_siaf_df["% AVANCE DEV MES/PROG"] = np.where(
+                    reporte_siaf_df["PROGRAMADO MES"].astype(float) > 0,
+                    reporte_siaf_df["DEVENGADO MES"].astype(float)
+                    / reporte_siaf_df["PROGRAMADO MES"].astype(float)
+                    * 100.0,
+                    0.0,
+                )
                 reporte_siaf_df = (
                     reporte_siaf_df.sort_values("orden", kind="stable")
                     .drop(columns=["orden", "nivel"], errors="ignore")
@@ -1248,7 +1786,9 @@ with tab_reporte:
                         "PIM",
                         "CERTIFICADO",
                         "COMPROMETIDO",
-                        "DEVENGADO",
+                        "DEVENGADO MES",
+                        "PROGRAMADO MES",
+                        "% AVANCE DEV MES/PROG",
                         "% AVANCE DEV /PIM",
                     ]
                 ]
@@ -1260,7 +1800,9 @@ with tab_reporte:
                         "PIM",
                         "CERTIFICADO",
                         "COMPROMETIDO",
-                        "DEVENGADO",
+                        "DEVENGADO MES",
+                        "PROGRAMADO MES",
+                        "% AVANCE DEV MES/PROG",
                         "% AVANCE DEV /PIM",
                     ]
                 )
@@ -1268,10 +1810,15 @@ with tab_reporte:
             reporte_display = round_numeric_for_reporting(reporte_siaf_df)
             fmt_reporte = build_style_formatters(reporte_display)
             reporte_style = reporte_display.style
-            if "% AVANCE DEV /PIM" in reporte_display.columns:
+            highlight_cols = [
+                col
+                for col in ["% AVANCE DEV /PIM", "% AVANCE DEV MES/PROG"]
+                if col in reporte_display.columns
+            ]
+            if highlight_cols:
                 reporte_style = reporte_style.applymap(
                     lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                    subset=["% AVANCE DEV /PIM"],
+                    subset=highlight_cols,
                 )
             if fmt_reporte:
                 reporte_style = reporte_style.format(fmt_reporte)
@@ -1286,6 +1833,7 @@ with tab_descarga:
         ritmo=round_numeric_for_reporting(ritmo_df.copy()),
         leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
         reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
+        reporte_siaf_pivot_source=reporte_siaf_pivot_source.copy(),
     )
     st.download_button(
         "Descargar Excel (Resumen + Avance)",

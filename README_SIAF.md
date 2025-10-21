@@ -29,3 +29,29 @@ streamlit run siaf_dashboard.py
 - Puedes agrupar por **generica, especifica, fuente_financ, unidad_ejecutora, función, programa**, etc.
 - Descarga un Excel con el **resumen** (pivot) y los **datos filtrados**.
 
+## ¿Cómo obtengo el código completo para copiarlo manualmente?
+
+Desde la raíz del proyecto puedes elegir entre estas dos alternativas:
+
+1. **Guardar una copia en un archivo nuevo**
+
+   ```bash
+   python export_siaf_dashboard.py -o ruta/destino/siaf_dashboard.py
+   ```
+
+   Sustituye `ruta/destino/` por la carpeta donde quieres recibir la copia. Se creará automáticamente si no existe.
+
+2. **Mostrar todo el contenido en pantalla para copiarlo**
+
+   ```bash
+   python export_siaf_dashboard.py --stdout
+   ```
+
+   También puedes redirigir la salida a un archivo con `>` si te resulta más cómodo:
+
+   ```bash
+   python export_siaf_dashboard.py --stdout > siaf_dashboard.py
+   ```
+
+Estas opciones reproducen los comandos compartidos previamente y facilitan tener el código listo para subirlo manualmente.
+
