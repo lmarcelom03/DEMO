@@ -31,7 +31,7 @@ streamlit run siaf_dashboard.py
 
 ## ¿Cómo obtengo el código completo para copiarlo manualmente?
 
-Desde la raíz del proyecto puedes elegir entre estas dos alternativas:
+Desde la raíz del proyecto o directamente en la interfaz puedes elegir entre estas alternativas:
 
 1. **Guardar una copia en un archivo nuevo**
 
@@ -53,5 +53,11 @@ Desde la raíz del proyecto puedes elegir entre estas dos alternativas:
    python export_siaf_dashboard.py --stdout > siaf_dashboard.py
    ```
 
-Estas opciones reproducen los comandos compartidos previamente y facilitan tener el código listo para subirlo manualmente.
+3. **Copiarlo desde la pestaña "Código fuente" del dashboard**
+
+   - Ejecuta `streamlit run siaf_dashboard.py`.
+   - Ingresa a la pestaña **Código fuente**.
+   - Haz clic en **Descargar siaf_dashboard.py** o selecciona todo el texto del área y cópialo (`Ctrl+A`, luego `Ctrl+C`).
+
+Estas opciones reproducen los comandos compartidos previamente y ahora también permiten obtener el código sin salir de la app, facilitando tenerlo listo para subirlo manualmente.
 
