@@ -24,6 +24,13 @@ except ModuleNotFoundError:
 else:
     XLSXWRITER_AVAILABLE = True
 
+try:
+    import openpyxl  # type: ignore # noqa: F401
+except ModuleNotFoundError:
+    OPENPYXL_AVAILABLE = False
+else:
+    OPENPYXL_AVAILABLE = True
+
 LOGO_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAIJklEQVR4nO3cO4uUVxjA8We8bLISIiRxC1Mu2AleChEE11L8ALZi6WewtrK1URsr/QZWgo2VjSBWYiw0"
     "G7AIIUiCqzApNq/OrjvH93Iuz+X/q0KEdfac85/nzLizs/l8LgD2tq/1AwA0IxAggUCABAIBEggESCAQIIFAgAQCARIIBEg40PoBRPJqNsv2Ywvr8/ks19fCcjN+1CSv"
@@ -1016,9 +1023,21 @@ def to_excel_download(
         return pivot_source_sheet, pivot_table_config
 
     engine_candidates = []
+    missing_modules = set()
     if XLSXWRITER_AVAILABLE:
         engine_candidates.append("xlsxwriter")
-    engine_candidates.append("openpyxl")
+    else:
+        missing_modules.add("xlsxwriter")
+    if OPENPYXL_AVAILABLE:
+        engine_candidates.append("openpyxl")
+    else:
+        missing_modules.add("openpyxl")
+    if not engine_candidates:
+        missing_summary = ", ".join(sorted(missing_modules)) or "xlsxwriter, openpyxl"
+        raise ModuleNotFoundError(
+            f"No se encontró un motor de Excel disponible. Instala {missing_summary}.",
+            name=missing_summary,
+        )
 
     pivot_source_sheet = None
     pivot_table_config = None
@@ -1034,12 +1053,15 @@ def to_excel_download(
             engine_used = engine
             break
         except ModuleNotFoundError as exc:
+            missing_modules.add(getattr(exc, "name", engine))
             last_exc = exc
             continue
 
     if engine_used is None or output is None:
+        missing_summary = ", ".join(sorted(missing_modules)) or "xlsxwriter, openpyxl"
         raise ModuleNotFoundError(
-            "No se encontró un motor de Excel disponible. Instala `xlsxwriter` u `openpyxl`."
+            f"No se encontró un motor de Excel disponible. Instala {missing_summary}.",
+            name=missing_summary,
         ) from last_exc
 
     output.seek(0)
@@ -1052,7 +1074,7 @@ def to_excel_download(
             pivot_table_config["rows"],
             pivot_table_config["values"],
         )
-    return output
+    return output, engine_used
 
 # =========================
 # Carga del archivo
@@ -1872,21 +1894,40 @@ with tab_descarga:
         st.warning(
             "No se encontró la librería `xlsxwriter`. El Excel se generará sin tablas ni gráficos embebidos."
         )
-    buf = to_excel_download(
-        resumen=round_numeric_for_reporting(pivot.copy()),
-        avance=round_numeric_for_reporting(avance_series.copy()),
-        proyeccion=proyeccion_wide,
-        ritmo=round_numeric_for_reporting(ritmo_df.copy()),
-        leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
-        reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
-        reporte_siaf_pivot_source=reporte_siaf_pivot_source.copy(),
-    )
-    st.download_button(
-        "Descargar Excel (Resumen + Avance)",
-        data=buf,
-        file_name="siaf_resumen_avance.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    excel_buffer = None
+    excel_engine = None
+    try:
+        excel_buffer, excel_engine = to_excel_download(
+            resumen=round_numeric_for_reporting(pivot.copy()),
+            avance=round_numeric_for_reporting(avance_series.copy()),
+            proyeccion=proyeccion_wide,
+            ritmo=round_numeric_for_reporting(ritmo_df.copy()),
+            leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
+            reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
+            reporte_siaf_pivot_source=reporte_siaf_pivot_source.copy(),
+        )
+    except ModuleNotFoundError as exc:
+        missing = getattr(exc, "name", "xlsxwriter/openpyxl")
+        st.error(
+            "No se pudo generar el archivo de Excel porque faltan dependencias instaladas: "
+            f"{missing}. Solicita al administrador que agregue el paquete correspondiente."
+        )
+    except Exception as exc:
+        st.error(f"No se pudo generar el archivo de Excel: {exc}")
+    else:
+        if excel_engine == "openpyxl" and XLSXWRITER_AVAILABLE:
+            st.info(
+                "`xlsxwriter` no se pudo inicializar, se utilizó `openpyxl` como alternativa. "
+                "Instala `xlsxwriter` para recuperar tablas y gráficos embebidos."
+            )
+
+    if excel_buffer is not None:
+        st.download_button(
+            "Descargar Excel (Resumen + Avance)",
+            data=excel_buffer,
+            file_name="siaf_resumen_avance.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 with tab_codigo:
     st.header("Código fuente de la aplicación")
