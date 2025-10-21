@@ -1,8 +1,4 @@
-diff --git a/siaf_dashboard.py b/siaf_dashboard.py
-index 17a4c4d4d8e48d718ecb63187884dc67583eaa6d..a3c5f5198c7beffa3ce5dd91828bb4a100e591b5 100644
---- a/siaf_dashboard.py
-+++ b/siaf_dashboard.py
-@@ -1,40 +1,38 @@
+
 +# -*- coding: utf-8 -*-
 +
  import base64
