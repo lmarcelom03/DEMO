@@ -5,6 +5,7 @@ import io
 import re
 import smtplib
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import altair as alt
@@ -1198,6 +1199,7 @@ proyeccion_wide = pd.DataFrame()
     tab_gestion,
     tab_reporte,
     tab_descarga,
+    tab_codigo,
 ) = st.tabs([
     "Resumen ejecutivo",
     "Agrupaciones",
@@ -1207,6 +1209,7 @@ proyeccion_wide = pd.DataFrame()
     "Ritmo y alertas",
     "Reporte SIAF",
     "Descargas",
+    "Código fuente",
 ])
 
 with tab_resumen:
@@ -1841,3 +1844,46 @@ with tab_descarga:
         file_name="siaf_resumen_avance.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+with tab_codigo:
+    st.header("Código fuente de la aplicación")
+    st.markdown(
+        "Puedes descargar o copiar directamente el contenido actualizado de `siaf_dashboard.py` para compartirlo manualmente."
+    )
+
+    try:
+        dashboard_path = Path(__file__).resolve()
+        dashboard_code = dashboard_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        st.error(f"No se pudo leer el archivo principal: {exc}")
+        dashboard_code = ""
+
+    if dashboard_code:
+        st.download_button(
+            "Descargar siaf_dashboard.py",
+            data=dashboard_code.encode("utf-8"),
+            file_name="siaf_dashboard.py",
+            mime="text/x-python",
+        )
+        st.caption(
+            "Selecciona el texto siguiente (Ctrl+A) y cópialo (Ctrl+C) si prefieres pegarlo directamente en otro entorno."
+        )
+        st.text_area(
+            "Contenido completo de siaf_dashboard.py",
+            value=dashboard_code,
+            height=520,
+        )
+
+    helper_path = Path(__file__).resolve().parent / "export_siaf_dashboard.py"
+    if helper_path.exists():
+        try:
+            helper_code = helper_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            st.warning(f"No se pudo leer export_siaf_dashboard.py: {exc}")
+        else:
+            st.download_button(
+                "Descargar export_siaf_dashboard.py",
+                data=helper_code.encode("utf-8"),
+                file_name="export_siaf_dashboard.py",
+                mime="text/x-python",
+            )
