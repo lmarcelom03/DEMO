@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import base64
-import importlib.util
 import io
 import re
 import smtplib
@@ -18,7 +17,12 @@ PRIMARY_COLOR = "#c62828"
 SECONDARY_COLOR = "#fbe9e7"
 ACCENT_COLOR = "#0f4c81"
 
-XLSXWRITER_AVAILABLE = importlib.util.find_spec("xlsxwriter") is not None
+try:
+    import xlsxwriter  # type: ignore
+except ModuleNotFoundError:
+    XLSXWRITER_AVAILABLE = False
+else:
+    XLSXWRITER_AVAILABLE = True
 
 LOGO_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAIJklEQVR4nO3cO4uUVxjA8We8bLISIiRxC1Mu2AleChEE11L8ALZi6WewtrK1URsr/QZWgo2VjSBWYiw0"
@@ -917,17 +921,12 @@ def to_excel_download(
     reporte_siaf=None,
     reporte_siaf_pivot_source=None,
 ):
-    output = io.BytesIO()
-
-    preferred_engine = "xlsxwriter" if XLSXWRITER_AVAILABLE else "openpyxl"
-
-    with pd.ExcelWriter(output, engine=preferred_engine) as writer:
-        use_xlsxwriter = preferred_engine == "xlsxwriter"
+    def _populate_workbook(writer: pd.ExcelWriter, use_xlsxwriter: bool):
         workbook = writer.book if use_xlsxwriter else None
         header_format = None
         currency_format = None
         percent_format = None
-        if use_xlsxwriter:
+        if use_xlsxwriter and workbook is not None:
             header_format = workbook.add_format({"bold": True, "bg_color": "#c62828", "font_color": "#ffffff"})
             currency_format = workbook.add_format({"num_format": "#,##0.00"})
             percent_format = workbook.add_format({"num_format": "0.00%"})
@@ -944,7 +943,7 @@ def to_excel_download(
             worksheet = writer.sheets[sheet_name]
 
             max_row, max_col = df.shape
-            if use_xlsxwriter:
+            if use_xlsxwriter and workbook is not None:
                 table_name = f"Tbl{_sanitize_table_name(sheet_name)}"
                 worksheet.add_table(
                     0,
@@ -1013,6 +1012,35 @@ def to_excel_download(
                     {"field": "AvanceProgramado%", "function": "average", "num_format": "0.00%"},
                 ],
             }
+
+        return pivot_source_sheet, pivot_table_config
+
+    engine_candidates = []
+    if XLSXWRITER_AVAILABLE:
+        engine_candidates.append("xlsxwriter")
+    engine_candidates.append("openpyxl")
+
+    pivot_source_sheet = None
+    pivot_table_config = None
+    output = None
+    engine_used = None
+    last_exc = None
+
+    for engine in engine_candidates:
+        output = io.BytesIO()
+        try:
+            with pd.ExcelWriter(output, engine=engine) as writer:
+                pivot_source_sheet, pivot_table_config = _populate_workbook(writer, engine == "xlsxwriter")
+            engine_used = engine
+            break
+        except ModuleNotFoundError as exc:
+            last_exc = exc
+            continue
+
+    if engine_used is None or output is None:
+        raise ModuleNotFoundError(
+            "No se encontró un motor de Excel disponible. Instala `xlsxwriter` u `openpyxl`."
+        ) from last_exc
 
     output.seek(0)
     if pivot_source_sheet and pivot_table_config:
