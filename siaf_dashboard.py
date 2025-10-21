@@ -1077,7 +1077,7 @@
      st.header("Avance mensual interactivo")
      if avance_series.empty:
 @@ -884,125 +1358,143 @@ with tab_gestion:
-             )]
+             ]
  
              if vista_ritmo == "Gráfico":
                  ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
