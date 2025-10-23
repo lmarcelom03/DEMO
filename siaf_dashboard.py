@@ -5,7 +5,6 @@ import io
 import re
 import smtplib
 from email.message import EmailMessage
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import altair as alt
@@ -1103,6 +1102,7 @@ filter_cols = [c for c in df.columns if any(k in c for k in [
     "unidad_ejecutora","fuente_financ","generica","especifica_det","funcion",
     "programa_pptal","sec_func","departamento_meta","provincia_meta","area"
 ])]
+filter_cols = [c for c in filter_cols if c not in {"subgenerica", "subgenerica_det"}]
 
 cols_f = st.columns(3)
 selected_filters = {}
@@ -1170,6 +1170,7 @@ _group_options = [c for c in df_proc.columns if c in [
     "clasificador_cod","unidad_ejecutora","fuente_financ","generica","especifica_det",
     "funcion","programa_pptal","sec_func","area"
 ]]
+_group_options = [c for c in _group_options if c not in {"subgenerica", "subgenerica_det"}]
 _group_default = _group_options.index("clasificador_cod") if "clasificador_cod" in _group_options else 0
 _group_col = st.selectbox("Agrupar por", options=_group_options, index=_group_default)
 _group_values = ["(Todos)"] + sorted(df_proc[_group_col].dropna().astype(str).unique().tolist())
@@ -1251,24 +1252,18 @@ proyeccion_wide = pd.DataFrame()
 # Navegación por apartados
 (
     tab_resumen,
-    tab_agrup,
-    tab_ci,
     tab_consol,
     tab_avance,
     tab_gestion,
     tab_reporte,
     tab_descarga,
-    tab_codigo,
 ) = st.tabs([
     "Resumen ejecutivo",
-    "Agrupaciones",
-    "Procesos CI–EC",
     "Consolidado",
     "Avance mensual",
     "Ritmo y alertas",
     "Reporte SIAF",
     "Descargas",
-    "Código fuente",
 ])
 
 with tab_resumen:
@@ -1281,43 +1276,6 @@ with tab_resumen:
     k5.metric("Devengado (YTD)", f"S/ {_tot_dev:,.2f}")
     k6.metric("Saldo PIM", f"S/ {_saldo_pim:,.2f}")
     k7.metric("Avance", f"{_avance_global:.2f}%")
-
-with tab_agrup:
-    st.header("Vistas por agrupación")
-    pivot_display = round_numeric_for_reporting(pivot)
-    fmt_pivot = build_style_formatters(pivot_display)
-    pivot_style = pivot_display.style
-    highlight_cols = [
-        col
-        for col in ["avance_%", "avance_mes_%", "avance_programado_%"]
-        if col in pivot_display.columns
-    ]
-    if highlight_cols:
-        pivot_style = pivot_style.applymap(
-            lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-            subset=highlight_cols,
-        )
-    if fmt_pivot:
-        pivot_style = pivot_style.format(fmt_pivot)
-    st.dataframe(pivot_style, use_container_width=True)
-
-with tab_ci:
-    st.header("Procesos CI–EC (monto vinculado a su cadena)")
-    if df_ci.empty:
-        st.info("No hay datos disponibles para esta vista.")
-    else:
-        df_ci_display = round_numeric_for_reporting(df_ci)
-        fmt_ci = build_style_formatters(df_ci_display)
-        ci_style = df_ci_display.style
-        highlight_cols = [c for c in ["avance_%", "avance_programado_%"] if c in df_ci_display.columns]
-        if highlight_cols:
-            ci_style = ci_style.applymap(
-                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=highlight_cols,
-            )
-        if fmt_ci:
-            ci_style = ci_style.format(fmt_ci)
-        st.dataframe(ci_style, use_container_width=True)
 
 with tab_consol:
     st.header("Consolidado por clasificador")
@@ -1926,49 +1884,3 @@ with tab_descarga:
             file_name="siaf_resumen_avance.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-with tab_codigo:
-    st.header("Código fuente de la aplicación")
-    st.markdown(
-        "Puedes descargar o copiar directamente el contenido actualizado de `siaf_dashboard.py` para compartirlo manualmente."
-    )
-
-    try:
-        dashboard_path = Path(__file__).resolve()
-        dashboard_code = dashboard_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        st.error(f"No se pudo leer el archivo principal: {exc}")
-        dashboard_code = ""
-
-    if dashboard_code:
-        st.download_button(
-            "Descargar siaf_dashboard.py",
-            data=dashboard_code.encode("utf-8"),
-            file_name="siaf_dashboard.py",
-            mime="text/x-python",
-        )
-        st.caption(
-            "Selecciona el texto siguiente (Ctrl+A) y cópialo (Ctrl+C) si prefieres pegarlo directamente en otro entorno."
-        )
-        st.text_area(
-            "Contenido completo de siaf_dashboard.py",
-            value=dashboard_code,
-            height=520,
-        )
-
-    helper_path = Path(__file__).resolve().parent / "export_siaf_dashboard.py"
-    helper_code = ""
-    if helper_path.exists():
-        try:
-            helper_code = helper_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            st.warning(f"No se pudo leer export_siaf_dashboard.py: {exc}")
-        else:
-            st.download_button(
-                "Descargar export_siaf_dashboard.py",
-                data=helper_code.encode("utf-8"),
-                file_name="export_siaf_dashboard.py",
-                mime="text/x-python",
-            )
-    else:
-        st.info("No se encontró export_siaf_dashboard.py en el directorio actual.")
