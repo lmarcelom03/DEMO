@@ -1957,6 +1957,7 @@ with tab_codigo:
         )
 
     helper_path = Path(__file__).resolve().parent / "export_siaf_dashboard.py"
+    helper_code = ""
     if helper_path.exists():
         try:
             helper_code = helper_path.read_text(encoding="utf-8")
@@ -1967,3 +1968,7 @@ with tab_codigo:
                 "Descargar export_siaf_dashboard.py",
                 data=helper_code.encode("utf-8"),
                 file_name="export_siaf_dashboard.py",
+                mime="text/x-python",
+            )
+    else:
+        st.info("No se encontró export_siaf_dashboard.py en el directorio actual.")
