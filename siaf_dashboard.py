@@ -1103,6 +1103,7 @@ filter_cols = [c for c in df.columns if any(k in c for k in [
     "unidad_ejecutora","fuente_financ","generica","especifica_det","funcion",
     "programa_pptal","sec_func","departamento_meta","provincia_meta","area"
 ])]
+filter_cols = [c for c in filter_cols if c not in {"subgenerica", "subgenerica_det"}]
 
 cols_f = st.columns(3)
 selected_filters = {}
@@ -1170,6 +1171,7 @@ _group_options = [c for c in df_proc.columns if c in [
     "clasificador_cod","unidad_ejecutora","fuente_financ","generica","especifica_det",
     "funcion","programa_pptal","sec_func","area"
 ]]
+_group_options = [c for c in _group_options if c not in {"subgenerica", "subgenerica_det"}]
 _group_default = _group_options.index("clasificador_cod") if "clasificador_cod" in _group_options else 0
 _group_col = st.selectbox("Agrupar por", options=_group_options, index=_group_default)
 _group_values = ["(Todos)"] + sorted(df_proc[_group_col].dropna().astype(str).unique().tolist())
