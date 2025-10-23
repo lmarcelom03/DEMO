@@ -899,6 +899,7 @@ def _attach_pivot_table(
         name=table_name,
         cacheId=cache_id,
         dataOnRows=False,
+        dataCaption="Valores",
         rowGrandTotals=True,
         colGrandTotals=True,
         location=Location(ref="A3", firstHeaderRow=3, firstDataRow=4, firstDataCol=1),
@@ -1099,10 +1100,8 @@ if "sec_func" in df.columns:
 # =========================
 st.subheader("Filtros")
 filter_cols = [c for c in df.columns if any(k in c for k in [
-    "unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
-    "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
-    "producto_proyecto","activ_obra_accinv","meta","sec_func",
-    "departamento_meta","provincia_meta","distrito_meta","area"
+    "unidad_ejecutora","fuente_financ","generica","especifica_det","funcion",
+    "programa_pptal","sec_func","departamento_meta","provincia_meta","area"
 ])]
 
 cols_f = st.columns(3)
@@ -1168,9 +1167,8 @@ _avance_global = (_tot_dev / _tot_pim * 100.0) if _tot_pim else 0.0
 dev_cols = [c for c in df_proc.columns if c.startswith("mto_devenga_")]
 
 _group_options = [c for c in df_proc.columns if c in [
-    "clasificador_cod","unidad_ejecutora","fuente_financ","generica","subgenerica","subgenerica_det",
-    "especifica","especifica_det","funcion","division_fn","grupo_fn","programa_pptal",
-    "producto_proyecto","activ_obra_accinv","meta","sec_func","area"
+    "clasificador_cod","unidad_ejecutora","fuente_financ","generica","especifica_det",
+    "funcion","programa_pptal","sec_func","area"
 ]]
 _group_default = _group_options.index("clasificador_cod") if "clasificador_cod" in _group_options else 0
 _group_col = st.selectbox("Agrupar por", options=_group_options, index=_group_default)
@@ -1969,5 +1967,3 @@ with tab_codigo:
                 "Descargar export_siaf_dashboard.py",
                 data=helper_code.encode("utf-8"),
                 file_name="export_siaf_dashboard.py",
-                mime="text/x-python",
-            )
