@@ -475,6 +475,20 @@ MONTH_NAME_ALIASES = {
     11: ("11", "nov", "noviembre", "november"),
     12: ("12", "dic", "diciembre", "dec", "december"),
 }
+MONTH_PROGRAM_COLUMN_PREFERENCES = {
+    1: ("ejecutado_01", "pf_enero"),
+    2: ("ejecutado_02", "pf_febrero"),
+    3: ("ejecutado_03", "pf_marzo"),
+    4: ("ejecutado_04", "pf_abril"),
+    5: ("ejecutado_05", "pf_mayo"),
+    6: ("ejecutado_06", "pf_junio"),
+    7: ("ejecutado_07", "pf_julio"),
+    8: ("ejecutado_08", "pf_agosto"),
+    9: ("ejecutado_09", "pf_setiembre"),
+    10: ("pf_octubre", "ejecutado_10"),
+    11: ("pf_noviembre", "ejecutado_11"),
+    12: ("pf_diciembre", "ejecutado_12"),
+}
 MONTH_NAME_LABELS = {
     1: "Enero",
     2: "Febrero",
@@ -502,8 +516,26 @@ def _normalize_label(label) -> str:
 def detect_programado_columns(df: pd.DataFrame) -> Dict[int, str]:
     """Infer the monthly programming columns (1-12) from the dataframe headers."""
 
+    normalized_columns: Dict[str, List[str]] = {}
+    for col in df.columns:
+        normalized_columns.setdefault(_normalize_label(col), []).append(col)
+
     month_candidates: Dict[int, List[Tuple[str, bool]]] = {i: [] for i in range(1, 13)}
     fallback: List[str] = []
+
+    mapping: Dict[int, str] = {}
+
+    # First, try explicit preferences provided by the SIAF format.
+    for month_id, preferences in MONTH_PROGRAM_COLUMN_PREFERENCES.items():
+        for candidate in preferences:
+            normalized_candidate = _normalize_label(candidate)
+            for col in normalized_columns.get(normalized_candidate, []):
+                series = df[col]
+                if pd.api.types.is_numeric_dtype(series):
+                    mapping[month_id] = col
+                    break
+            if month_id in mapping:
+                break
 
     for col in df.columns:
         series = df[col]
@@ -511,6 +543,9 @@ def detect_programado_columns(df: pd.DataFrame) -> Dict[int, str]:
             continue
         normalized = _normalize_label(col)
         if not normalized:
+            continue
+        # Skip columns already mapped via preferences.
+        if col in mapping.values():
             continue
         contains_program = any(token in normalized for token in PROGRAM_MATCH_TOKENS)
         month_id = None
@@ -523,8 +558,9 @@ def detect_programado_columns(df: pd.DataFrame) -> Dict[int, str]:
         elif contains_program:
             fallback.append(col)
 
-    mapping: Dict[int, str] = {}
     for month_id, options in month_candidates.items():
+        if month_id in mapping:
+            continue
         if not options:
             continue
         options_sorted = sorted(options, key=lambda item: (not item[1], len(str(item[0]))))
