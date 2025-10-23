@@ -4,13 +4,30 @@ import base64
 import io
 import re
 import smtplib
+from datetime import datetime
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+EXCEL_SOURCE_DIR = Path(__file__).parent / "data" / "siaf"
+EXCEL_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_excel_candidates(folder: Path) -> List[Path]:
+    return sorted(
+        [p for p in folder.glob("*.xlsx") if p.is_file()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+
+EXCEL_CANDIDATES = _list_excel_candidates(EXCEL_SOURCE_DIR)
+LATEST_EXCEL = EXCEL_CANDIDATES[0] if EXCEL_CANDIDATES else None
 
 PRIMARY_COLOR = "#c62828"
 SECONDARY_COLOR = "#fbe9e7"
@@ -162,7 +179,8 @@ with header_col_text:
     )
 
 st.markdown(
-    "<p class='app-description'>Carga el <strong>Excel SIAF</strong> para analizar <strong>PIA, PIM, Certificado, Comprometido, Devengado, Saldo PIM y % de avance</strong>. "
+    "<p class='app-description'>El dashboard toma automáticamente el <strong>Excel SIAF</strong> más reciente de la carpeta "
+    "<code>data/siaf</code> para analizar <strong>PIA, PIM, Certificado, Comprometido, Devengado, Saldo PIM y % de avance</strong>. "
     "La aplicación asegura la lectura completa hasta CI, construye clasificadores jerárquicos estandarizados y ofrece vistas dinámicas con descargas.</p>",
     unsafe_allow_html=True,
 )
@@ -170,11 +188,35 @@ st.markdown(
 # =========================
 # Sidebar / parámetros
 # =========================
+selected_excel_path = LATEST_EXCEL
+
 with st.sidebar:
     st.image(LOGO_IMAGE, width=140)
     st.markdown("<h3 style='color: var(--primary-color); margin-top: 0.5rem;'>Panel de control</h3>", unsafe_allow_html=True)
+    st.header("Origen de datos")
+    st.caption(
+        "Coloca los archivos <code>.xlsx</code> en <code>data/siaf</code>. El dashboard usa el más reciente automáticamente."
+    )
+    if not EXCEL_CANDIDATES:
+        st.error("No se encontraron archivos .xlsx en data/siaf. Añade uno y vuelve a actualizar.")
+    else:
+        label_to_path = {}
+        option_labels = []
+        for path in EXCEL_CANDIDATES:
+            updated = datetime.fromtimestamp(path.stat().st_mtime).strftime("%d/%m/%Y %H:%M")
+            label = f"{path.name} · {updated}"
+            label_to_path[label] = path
+            option_labels.append(label)
+        selected_label = st.selectbox(
+            "Selecciona el archivo SIAF",
+            options=option_labels,
+            index=0,
+            help="Los archivos están ordenados del más reciente al más antiguo.",
+        )
+        selected_excel_path = label_to_path[selected_label]
+        st.success(f"Usando: {selected_excel_path.name}")
+    st.markdown("---")
     st.header("Parámetros de lectura")
-    uploaded = st.file_uploader("Archivo SIAF (.xlsx)", type=["xlsx"])
     usecols = st.text_input(
         "Rango de columnas (Excel)",
         "A:DV",
@@ -190,6 +232,10 @@ with st.sidebar:
     riesgo_umbral = st.number_input("Umbral de avance mínimo (%)", min_value=0, max_value=100, value=60)
     meta_avance = st.number_input("Meta de avance al cierre (%)", min_value=0, max_value=100, value=95)
     st.caption("Se marca riesgo_devolucion si Avance% < Umbral.")
+
+if selected_excel_path is None:
+    st.error("No hay archivos disponibles en data/siaf. Añade un Excel y vuelve a ejecutar el dashboard.")
+    st.stop()
 
 # Mapeo de códigos de sec_func a nombres
 SEC_FUNC_MAP = {
@@ -1079,17 +1125,21 @@ def to_excel_download(
 # =========================
 # Carga del archivo
 # =========================
-if uploaded is None:
-    st.info("Sube tu archivo Excel SIAF para empezar. Usa A:CH para incluir pasos CI–EC.")
-    st.stop()
-
 try:
-    df, used_sheet = load_data(uploaded, usecols, sheet_name.strip() or None, int(header_row_excel), autodetect=detect_header)
+    df, used_sheet = load_data(
+        selected_excel_path,
+        usecols,
+        sheet_name.strip() or None,
+        int(header_row_excel),
+        autodetect=detect_header,
+    )
 except Exception as e:
-    st.error(f"No se pudo leer el archivo: {e}")
+    st.error(f"No se pudo leer el archivo '{selected_excel_path.name}': {e}")
     st.stop()
 
-st.success(f"Leída la hoja '{used_sheet}' con {df.shape[0]} filas y {df.shape[1]} columnas.")
+st.success(
+    f"Leída la hoja '{used_sheet}' del archivo '{selected_excel_path.name}' con {df.shape[0]} filas y {df.shape[1]} columnas."
+)
 
 if "sec_func" in df.columns:
     df["sec_func"] = df["sec_func"].apply(map_sec_func)

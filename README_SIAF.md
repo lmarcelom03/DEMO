@@ -18,7 +18,7 @@ streamlit run siaf_dashboard.py
 
 3) Abre el navegador en la URL que te muestre Streamlit (por defecto http://localhost:8501).
 
-4) Sube tu archivo SIAF (.xlsx). Por defecto, el app intentará:
+4) Coloca el Excel SIAF en la carpeta `data/siaf/` del repositorio (puedes versionarla o sincronizarla). Al iniciar el dashboard tomará automáticamente el archivo `.xlsx` más reciente y, si hay varios, podrás elegirlo desde la barra lateral. Por defecto, el app intentará:
    - Detectar la **hoja** con los datos (busca columnas como `ano_eje`, `mto_pim`).
    - Leer el rango **A:CH**.
    - Detectar automáticamente la fila de **encabezados** (puedes desactivar y fijarlo, p. ej. fila 4).
@@ -53,11 +53,5 @@ Desde la raíz del proyecto o directamente en la interfaz puedes elegir entre es
    python export_siaf_dashboard.py --stdout > siaf_dashboard.py
    ```
 
-3. **Copiarlo desde la pestaña "Código fuente" del dashboard**
-
-   - Ejecuta `streamlit run siaf_dashboard.py`.
-   - Ingresa a la pestaña **Código fuente**.
-   - Haz clic en **Descargar siaf_dashboard.py** o selecciona todo el texto del área y cópialo (`Ctrl+A`, luego `Ctrl+C`).
-
-Estas opciones reproducen los comandos compartidos previamente y ahora también permiten obtener el código sin salir de la app, facilitando tenerlo listo para subirlo manualmente.
+Estas opciones reproducen los comandos compartidos previamente y permiten obtener el código manualmente cuando lo necesites.
 
