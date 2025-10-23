@@ -1445,9 +1445,23 @@ with tab_gestion:
             agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
             agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
 
-            max_top = int(agg_sec.shape[0])
-            top_default = min(5, max_top) if max_top else 1
-            top_n = st.slider("Número de áreas a mostrar", min_value=1, max_value=max_top or 1, value=top_default)
+            max_top = max(int(agg_sec.shape[0]), 1)
+            top_default = min(5, max_top)
+            slider_key = "leaderboard_top_n"
+            if slider_key in st.session_state:
+                current_val = st.session_state[slider_key]
+                if current_val > max_top or current_val < 1:
+                    st.session_state[slider_key] = min(max(current_val, 1), max_top)
+            else:
+                st.session_state[slider_key] = top_default
+
+            top_n = st.slider(
+                "Número de áreas a mostrar",
+                min_value=1,
+                max_value=max_top,
+                value=st.session_state[slider_key],
+                key=slider_key,
+            )
 
             leaderboard_df = (
                 agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
