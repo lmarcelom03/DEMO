@@ -226,7 +226,7 @@ with st.sidebar:
     detect_header = st.checkbox("Autodetectar encabezado", value=True)
     st.markdown("---")
     st.header("Reglas CI–EC")
-    current_month = st.number_input("Mes actual (1-12)", min_value=1, max_value=12, value=9)
+    current_month = st.number_input("Mes actual (1-12)", min_value=1, max_value=12, value=10)
     riesgo_umbral = st.number_input("Umbral de avance mínimo (%)", min_value=0, max_value=100, value=60)
     meta_avance = st.number_input("Meta de avance al cierre (%)", min_value=0, max_value=100, value=95)
     st.caption("Se marca riesgo_devolucion si Avance% < Umbral.")
