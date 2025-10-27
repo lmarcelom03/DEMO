@@ -1548,22 +1548,21 @@ if (
         intelligent_projected = 0.0
         intelligent_pct = 0.0
 
-    simulation_overview_df = pd.DataFrame(
-        [
-            {
-                "Escenario": "Sin devoluciones",
-                "PIM final": total_pim,
-                "Devengado proyectado": projected_total,
-                "% avance fin de año": baseline_pct,
-            },
-            {
-                "Escenario": "Devolución inteligente",
-                "PIM final": max(intelligent_pim, 0.0),
-                "Devengado proyectado": intelligent_projected,
-                "% avance fin de año": intelligent_pct,
-            },
-        ]
-    )
+    overview_rows = [
+        {
+            "Escenario": "Sin devoluciones",
+            "PIM final": total_pim,
+            "Devengado proyectado": projected_total,
+            "% avance fin de año": baseline_pct,
+        },
+        {
+            "Escenario": "Devolución inteligente",
+            "PIM final": max(intelligent_pim, 0.0),
+            "Devengado proyectado": intelligent_projected,
+            "% avance fin de año": intelligent_pct,
+        },
+    ]
+    simulation_overview_df = pd.DataFrame(overview_rows)
 
     scenario_rows: List[Dict[str, float]] = []
     for row in aggregated_generica.itertuples():
@@ -1589,8 +1588,11 @@ if (
 
     simulation_metrics = {
         "baseline_pct": baseline_pct,
+        "baseline_projected": projected_total,
         "intelligent_pct": intelligent_pct,
         "intelligent_return": intelligent_return,
+        "intelligent_pim": intelligent_pim,
+        "intelligent_projected": intelligent_projected,
         "total_pim": total_pim,
         "projected_total": projected_total,
         "months_elapsed": months_elapsed,
@@ -1892,13 +1894,190 @@ with tab_simulacion:
             detail_style = detail_style.format(fmt_detail)
         st.dataframe(detail_style, use_container_width=True)
 
+        adjustable_rows = simulation_detail_df[
+            simulation_detail_df["saldo_por_devolver"] > 0
+        ].copy()
+        custom_returns: Dict[str, float] = {}
+        custom_detail_rows: List[Dict[str, float]] = []
+
+        total_pim = simulation_metrics.get("total_pim", 0.0)
+        projected_total = simulation_metrics.get("projected_total", 0.0)
+
+        if adjustable_rows.empty:
+            st.info(
+                "No hay genéricas con saldo disponible para devolver manualmente."
+            )
+        else:
+            st.subheader("Configurar devolución personalizada")
+            st.write(
+                "Ajusta los montos a devolver por genérica para simular un escenario personalizado. "
+                "Los valores iniciales corresponden a la recomendación automática y se restringen al saldo por devolver detectado."
+            )
+
+            for idx, row in enumerate(adjustable_rows.itertuples()):
+                max_return = float(row.saldo_por_devolver)
+                if max_return <= 0:
+                    continue
+                recommended = float(row.retorno_sugerido)
+                default_value = min(recommended, max_return)
+                step = max(max_return / 20.0, 1.0)
+                key_label = re.sub(r"[^0-9a-zA-Z]+", "_", str(row.generica)) or "generica"
+                input_value = st.number_input(
+                    f"{row.generica}",
+                    min_value=0.0,
+                    max_value=max_return,
+                    value=default_value,
+                    step=step,
+                    format="%.2f",
+                    key=f"sim_return_{idx}_{key_label.lower()}",
+                    help=(
+                        "Saldo disponible: S/ {:,.2f}. Devolución sugerida: S/ {:,.2f}".format(
+                            max_return, recommended
+                        )
+                    ),
+                )
+                custom_returns[row.generica] = float(input_value)
+
+        overview_rows = simulation_overview_df.to_dict("records")
+        custom_return_total = float(sum(custom_returns.values())) if custom_returns else 0.0
+        custom_pim_final = max(total_pim - custom_return_total, 0.0)
+        if custom_pim_final > 0:
+            custom_projected = min(projected_total, custom_pim_final)
+            custom_pct = custom_projected / custom_pim_final * 100.0
+        else:
+            custom_projected = 0.0
+            custom_pct = 0.0
+
+        if custom_returns:
+            overview_rows.append(
+                {
+                    "Escenario": "Devolución personalizada",
+                    "PIM final": custom_pim_final,
+                    "Devengado proyectado": custom_projected,
+                    "% avance fin de año": custom_pct,
+                }
+            )
+
+        for row in simulation_detail_df.itertuples():
+            suggested = float(row.retorno_sugerido)
+            manual_return = float(custom_returns.get(row.generica, 0.0))
+            pim_base = float(row.mto_pim)
+            pim_final = max(pim_base - manual_return, 0.0)
+            projected = min(float(row.proyeccion_total), pim_final)
+            avance_pct = projected / pim_final * 100.0 if pim_final else 0.0
+            custom_detail_rows.append(
+                {
+                    "generica": row.generica,
+                    "pim_base": pim_base,
+                    "pim_final": pim_final,
+                    "devengado_proyectado": projected,
+                    "devolucion_sugerida": suggested,
+                    "devolucion_personalizada": manual_return,
+                    "%_fin_ano": avance_pct,
+                }
+            )
+
+        if custom_returns:
+            simulation_metrics.update(
+                {
+                    "custom_return": custom_return_total,
+                    "custom_pct": custom_pct,
+                    "custom_pim": custom_pim_final,
+                    "custom_projected": custom_projected,
+                }
+            )
+
         st.subheader("Escenarios comparativos")
-        overview_display = round_numeric_for_reporting(simulation_overview_df.copy())
+        overview_df = pd.DataFrame(overview_rows)
+        overview_display = round_numeric_for_reporting(overview_df.copy())
         fmt_overview = build_style_formatters(overview_display)
         overview_style = overview_display.style
         if fmt_overview:
             overview_style = overview_style.format(fmt_overview)
         st.dataframe(overview_style, use_container_width=True)
+
+        st.subheader("Visualización interactiva de escenarios")
+        chart_rows = []
+        for record in overview_rows:
+            chart_rows.append(
+                {
+                    "Escenario": record["Escenario"],
+                    "Indicador": "PIM final",
+                    "Monto": float(record.get("PIM final", 0.0)),
+                }
+            )
+            chart_rows.append(
+                {
+                    "Escenario": record["Escenario"],
+                    "Indicador": "Devengado proyectado",
+                    "Monto": float(record.get("Devengado proyectado", 0.0)),
+                }
+            )
+            chart_rows.append(
+                {
+                    "Escenario": record["Escenario"],
+                    "Indicador": "% avance fin de año",
+                    "Monto": float(record.get("% avance fin de año", 0.0)),
+                }
+            )
+        scenarios_chart_df = pd.DataFrame(chart_rows)
+        if not scenarios_chart_df.empty:
+            scenario_chart = (
+                alt.Chart(scenarios_chart_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Escenario:N", title="Escenario"),
+                    y=alt.Y("Monto:Q", title="Valor", axis=alt.Axis(format=",.2f")),
+                    color=alt.Color("Indicador:N", title="Indicador"),
+                    column=alt.Column("Indicador:N", title=""),
+                    tooltip=[
+                        alt.Tooltip("Escenario:N", title="Escenario"),
+                        alt.Tooltip("Indicador:N", title="Indicador"),
+                        alt.Tooltip("Monto:Q", title="Valor", format=",.2f"),
+                    ],
+                )
+                .resolve_scale(y="independent")
+                .properties(height=280)
+                .interactive()
+            )
+            st.altair_chart(scenario_chart, use_container_width=True)
+
+        if custom_returns:
+            chart_return_rows = []
+            for row in adjustable_rows.itertuples():
+                chart_return_rows.append(
+                    {
+                        "Genérica": row.generica,
+                        "Tipo": "Sugerido",
+                        "Monto": float(row.retorno_sugerido),
+                    }
+                )
+                chart_return_rows.append(
+                    {
+                        "Genérica": row.generica,
+                        "Tipo": "Personalizado",
+                        "Monto": float(custom_returns.get(row.generica, 0.0)),
+                    }
+                )
+            returns_chart_df = pd.DataFrame(chart_return_rows)
+            if not returns_chart_df.empty:
+                returns_chart = (
+                    alt.Chart(returns_chart_df)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Genérica:N", sort="-y", title="Genérica"),
+                        y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
+                        color=alt.Color("Tipo:N", title="Escenario"),
+                        tooltip=[
+                            alt.Tooltip("Genérica:N", title="Genérica"),
+                            alt.Tooltip("Tipo:N", title="Escenario"),
+                            alt.Tooltip("Monto:Q", title="Monto", format=",.2f"),
+                        ],
+                    )
+                    .properties(height=320)
+                    .interactive()
+                )
+                st.altair_chart(returns_chart, use_container_width=True)
 
         if not simulation_per_gen_df.empty:
             st.subheader("Impacto por genérica evaluada")
@@ -1918,11 +2097,39 @@ with tab_simulacion:
                 per_gen_style = per_gen_style.format(fmt_per_gen)
             st.dataframe(per_gen_style, use_container_width=True)
 
+        if custom_returns and custom_detail_rows:
+            custom_per_gen_df = pd.DataFrame(custom_detail_rows)
+            custom_per_gen_df = custom_per_gen_df[
+                custom_per_gen_df["devolucion_personalizada"] > 0
+            ]
+            if not custom_per_gen_df.empty:
+                st.subheader("Impacto personalizado por genérica")
+                custom_display = custom_per_gen_df.rename(
+                    columns={
+                        "generica": "Genérica",
+                        "pim_base": "PIM base",
+                        "pim_final": "PIM final",
+                        "devengado_proyectado": "Devengado proyectado",
+                        "devolucion_sugerida": "Devolución sugerida",
+                        "devolucion_personalizada": "Devolución personalizada",
+                        "%_fin_ano": "% avance fin de año",
+                    }
+                )
+                custom_display = round_numeric_for_reporting(custom_display)
+                fmt_custom = build_style_formatters(custom_display)
+                custom_style = custom_display.style
+                if fmt_custom:
+                    custom_style = custom_style.format(fmt_custom)
+                st.dataframe(custom_style, use_container_width=True)
+
         baseline_pct = simulation_metrics.get("baseline_pct", 0.0)
         intelligent_pct = simulation_metrics.get("intelligent_pct", baseline_pct)
         intelligent_return = simulation_metrics.get("intelligent_return", 0.0)
         projected_total = simulation_metrics.get("projected_total", 0.0)
         total_pim = simulation_metrics.get("total_pim", 0.0)
+        custom_pct = simulation_metrics.get("custom_pct")
+        custom_return_total = simulation_metrics.get("custom_return", 0.0)
+        custom_projected = simulation_metrics.get("custom_projected")
         month_label = MONTH_NAME_LABELS.get(int(current_month), f"Mes {int(current_month):02d}")
 
         top_candidates = simulation_detail_df[simulation_detail_df["retorno_sugerido"] > 0]
@@ -1946,6 +2153,18 @@ with tab_simulacion:
             analysis_text = (
                 "**Análisis:** Con el ritmo actual se espera ejecutar S/ "
                 f"{projected_total:,.2f} ({baseline_pct:.2f}% del PIM), por lo que no se proyectan saldos sobrantes que ameriten devolución."
+            )
+
+        if (
+            custom_returns
+            and custom_pct is not None
+            and custom_projected is not None
+            and custom_return_total > 0
+        ):
+            analysis_text += (
+                " Al aplicar la devolución personalizada de S/ "
+                f"{custom_return_total:,.2f} el avance estimado alcanzaría {custom_pct:.2f}% con un devengado proyectado de S/ "
+                f"{custom_projected:,.2f}."
             )
 
         if not simulation_per_gen_df.empty:
