@@ -178,7 +178,7 @@ with header_col_text:
 
 st.markdown(
     "<p class='app-description'>El dashboard toma automáticamente el <strong>Excel SIAF</strong> más reciente de la carpeta "
-    "<code>data/siaf</code> para analizar <strong>PIA, PIM, Certificado, Comprometido, Devengado, Saldo PIM y % de avance</strong>. "
+    "<code>data/siaf</code> para analizar <strong>PIA, PIM, Certificado, No certificado, Comprometido, Devengado y % de avance</strong>. "
     "La aplicación asegura la lectura completa hasta CI, construye clasificadores jerárquicos estandarizados y ofrece vistas dinámicas con descargas.</p>",
     unsafe_allow_html=True,
 )
@@ -622,7 +622,7 @@ def ensure_ci_ec_steps(df, month, umbral):
     Crea/asegura columnas claves si no existen:
     - devengado (suma mto_devenga_01..12)
     - devengado_mes (columna del mes seleccionado)
-    - saldo_pim (pim - devengado)
+    - no_certificado (pim - certificado)
     - avance_% (devengado/pim)
     - riesgo_devolucion (avance_% < umbral)
     - area (vacía si no existe)
@@ -637,8 +637,12 @@ def ensure_ci_ec_steps(df, month, umbral):
     if "devengado_mes" not in df.columns:
         df["devengado_mes"] = df[col_mes] if col_mes in df.columns else 0.0
 
-    if "saldo_pim" not in df.columns:
-        df["saldo_pim"] = np.where(df.get("mto_pim", 0) > 0, df["mto_pim"] - df["devengado"], 0.0)
+    pim_series = pd.to_numeric(df.get("mto_pim", 0.0), errors="coerce").fillna(0.0)
+    certificado_series = pd.to_numeric(df.get("mto_certificado", 0.0), errors="coerce").fillna(0.0)
+    df["no_certificado"] = pim_series - certificado_series
+
+    if "saldo_pim" in df.columns:
+        df = df.drop(columns=["saldo_pim"])
 
     if "avance_%" not in df.columns:
         df["avance_%"] = np.where(df.get("mto_pim", 0) > 0, df["devengado"] / df["mto_pim"] * 100.0, 0.0)
@@ -780,8 +784,10 @@ def pivot_exec(df, group_col, dev_cols):
 
     g = df.groupby(group_col, dropna=False)[cols].sum().reset_index()
 
+    if "mto_pim" in g.columns:
+        certificado_col = g["mto_certificado"] if "mto_certificado" in g.columns else 0.0
+        g["no_certificado"] = g["mto_pim"] - certificado_col
     if "mto_pim" in g.columns and "devengado" in g.columns:
-        g["saldo_pim"] = g["mto_pim"] - g["devengado"]
         g["avance_%"] = np.where(g["mto_pim"] > 0, g["devengado"] / g["mto_pim"] * 100.0, 0.0)
     if "mto_pim" in g.columns and "devengado_mes" in g.columns:
         g["avance_mes_%"] = np.where(g["mto_pim"] > 0, g["devengado_mes"] / g["mto_pim"] * 100.0, 0.0)
@@ -1069,6 +1075,7 @@ def to_excel_download(
                 "values": [
                     {"field": "PIM", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "NO CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "COMPROMETIDO", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "DEVENGADO", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "DEVENGADO MES", "function": "sum", "num_format": "#,##0.00"},
@@ -1223,7 +1230,7 @@ _tot_pim = float(df_proc.get("mto_pim", 0).sum())
 _tot_dev = float(df_proc.get("devengado", 0).sum())
 _tot_cert = float(df_proc.get("mto_certificado", 0).sum()) if "mto_certificado" in df_proc.columns else 0.0
 _tot_comp = float(df_proc.get("mto_compro_anual", 0).sum()) if "mto_compro_anual" in df_proc.columns else 0.0
-_saldo_pim = _tot_pim - _tot_dev if _tot_pim else 0.0
+_no_certificado = _tot_pim - _tot_cert
 _avance_global = (_tot_dev / _tot_pim * 100.0) if _tot_pim else 0.0
 
 dev_cols = [c for c in df_proc.columns if c.startswith("mto_devenga_")]
@@ -1247,7 +1254,7 @@ _ci_cols = [
     "clasificador_cod", "clasificador_desc",
     "generica","subgenerica","subgenerica_det","especifica","especifica_det",
     "mto_pia","mto_pim","mto_certificado","mto_compro_anual",
-    "devengado_mes","programado_mes","devengado","saldo_pim",
+    "devengado_mes","programado_mes","devengado","no_certificado",
     "avance_%","avance_programado_%","riesgo_devolucion"
 ]
 _ci_cols = [c for c in _ci_cols if c in df_view.columns]
@@ -1263,7 +1270,7 @@ _consol_cols = [
         "devengado_mes",
         "programado_mes",
         "devengado",
-        "saldo_pim",
+        "no_certificado",
     ]
     if c in df_view.columns
 ]
@@ -1335,7 +1342,7 @@ with tab_resumen:
     k3.metric("Certificado", f"S/ {_tot_cert:,.2f}")
     k4.metric("Comprometido", f"S/ {_tot_comp:,.2f}")
     k5.metric("Devengado (YTD)", f"S/ {_tot_dev:,.2f}")
-    k6.metric("Saldo PIM", f"S/ {_saldo_pim:,.2f}")
+    k6.metric("No certificado", f"S/ {_no_certificado:,.2f}")
     k7.metric("Avance", f"{_avance_global:.2f}%")
 
 with tab_consol:
@@ -1544,7 +1551,7 @@ with tab_reporte:
                 "devengado_mes",
                 "programado_mes",
                 "devengado",
-                "saldo_pim",
+                "no_certificado",
             ]
             if c in df_view.columns
         ]
@@ -1587,6 +1594,7 @@ with tab_reporte:
                 "AVANCE DE EJECUCIÓN ACUMULADO": "devengado",
                 "PIM": "mto_pim",
                 "CERTIFICADO": "mto_certificado",
+                "NO CERTIFICADO": "no_certificado",
                 "COMPROMETIDO": "mto_compro_anual",
                 "DEVENGADO MES": "devengado_mes",
                 "PROGRAMADO MES": "programado_mes",
@@ -1615,6 +1623,7 @@ with tab_reporte:
                         "clasificador_cod-concepto": reporte_base["clasificador_cod_concepto"].fillna("").astype(str),
                         "PIM": _safe_numeric("mto_pim"),
                         "CERTIFICADO": _safe_numeric("mto_certificado"),
+                        "NO CERTIFICADO": _safe_numeric("no_certificado"),
                         "COMPROMETIDO": _safe_numeric("mto_compro_anual"),
                         "DEVENGADO": devengado_acum,
                         "DEVENGADO MES": devengado_mes_series,
@@ -1741,6 +1750,7 @@ with tab_reporte:
                         "AVANCE DE EJECUCIÓN ACUMULADO",
                         "PIM",
                         "CERTIFICADO",
+                        "NO CERTIFICADO",
                         "COMPROMETIDO",
                         "DEVENGADO MES",
                         "PROGRAMADO MES",
@@ -1755,6 +1765,7 @@ with tab_reporte:
                         "AVANCE DE EJECUCIÓN ACUMULADO",
                         "PIM",
                         "CERTIFICADO",
+                        "NO CERTIFICADO",
                         "COMPROMETIDO",
                         "DEVENGADO MES",
                         "PROGRAMADO MES",
