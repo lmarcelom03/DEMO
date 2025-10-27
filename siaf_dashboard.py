@@ -1461,6 +1461,13 @@ with tab_resumen:
     k5.metric("Devengado (YTD)", f"S/ {_tot_dev:,.2f}")
     k6.metric("No certificado", f"S/ {_no_certificado:,.2f}")
     k7.metric("Avance", f"{_avance_global:.2f}%")
+    pendiente_por_devengar = max(_tot_pim - _tot_dev, 0.0)
+    cert_ratio = (_tot_cert / _tot_pim * 100.0) if _tot_pim else 0.0
+    st.markdown(
+        "**Análisis:** El avance global llega a "
+        f"{_avance_global:.2f}% del PIM, con S/ {pendiente_por_devengar:,.2f} aún por devengar. "
+        f"El certificado cubre el {cert_ratio:.2f}% del presupuesto, dejando S/ {_no_certificado:,.2f} sin certificar."
+    )
 
 with tab_consol:
     st.header("Consolidado por clasificador")
@@ -1478,6 +1485,42 @@ with tab_consol:
         if fmt_consol:
             consol_style = consol_style.format(fmt_consol)
         st.dataframe(consol_style, use_container_width=True)
+        total_clasificadores = int(consolidado.shape[0])
+        if "devengado" in consolidado.columns and not consolidado["devengado"].empty:
+            dev_series = pd.to_numeric(consolidado["devengado"], errors="coerce").fillna(0.0)
+            top_idx = dev_series.idxmax()
+            top_row = consolidado.loc[top_idx]
+            label_fields = [
+                "clasificador_desc",
+                "clasificador_cod",
+                "generica",
+                "especifica_det",
+            ]
+            top_label = next(
+                (
+                    str(top_row.get(field)).strip()
+                    for field in label_fields
+                    if field in top_row and str(top_row.get(field)).strip()
+                ),
+                "el clasificador líder",
+            )
+            top_dev = float(dev_series.loc[top_idx])
+            avance_val = top_row.get("avance_%")
+            avance_text = (
+                f" con un avance de {float(avance_val):.2f}%"
+                if isinstance(avance_val, (int, float, np.floating)) and not np.isnan(avance_val)
+                else ""
+            )
+            st.markdown(
+                "**Análisis:** Se resumen "
+                f"{total_clasificadores} clasificadores; {top_label} concentra el mayor devengado "
+                f"con S/ {top_dev:,.2f}{avance_text}."
+            )
+        else:
+            st.markdown(
+                "**Análisis:** Se listan "
+                f"{total_clasificadores} clasificadores con montos presupuestales disponibles."
+            )
 
 with tab_avance:
     st.header("Avance mensual interactivo")
@@ -1534,6 +1577,26 @@ with tab_avance:
             if fmt_avance:
                 avance_style = avance_style.format(fmt_avance)
             st.dataframe(avance_style, use_container_width=True)
+        avance_calc = avance_display.copy()
+        if "devengado" in avance_calc.columns:
+            avance_calc["devengado"] = pd.to_numeric(avance_calc["devengado"], errors="coerce").fillna(0.0)
+            avance_calc = avance_calc.sort_values("mes")
+            avance_calc["acumulado"] = avance_calc["devengado"].cumsum()
+            last_row = avance_calc.iloc[-1]
+            peak_idx = avance_calc["devengado"].idxmax()
+            peak_row = avance_calc.loc[peak_idx]
+            last_month = int(last_row["mes"]) if not pd.isna(last_row["mes"]) else None
+            peak_month = int(peak_row["mes"]) if not pd.isna(peak_row["mes"]) else None
+            last_label = MONTH_NAME_LABELS.get(last_month, f"Mes {last_month:02d}") if last_month else "Último mes"
+            peak_label = MONTH_NAME_LABELS.get(peak_month, f"Mes {peak_month:02d}") if peak_month else "el mes con mayor ejecución"
+            acumulado = float(last_row.get("acumulado", 0.0))
+            avance_pct = float(last_row.get("%_acumulado", 0.0)) if "%_acumulado" in last_row else 0.0
+            peak_value = float(peak_row.get("devengado", 0.0))
+            st.markdown(
+                "**Análisis:** El devengado acumulado asciende a "
+                f"S/ {acumulado:,.2f} a {last_label} ({avance_pct:.2f}% del PIM). "
+                f"El mes más dinámico fue {peak_label} con S/ {peak_value:,.2f} devengados."
+            )
 
 with tab_saldos:
     st.header("Saldos programados vs. ejecución")
@@ -1609,6 +1672,21 @@ with tab_saldos:
                 .properties(width=620, height=320)
             )
             st.altair_chart(cumulative_chart, use_container_width=True)
+            saldos_subset = saldos_monthly[saldos_monthly["generica"].isin(seleccion_genericas)]
+            if not saldos_subset.empty:
+                last_month = int(saldos_subset["mes"].max())
+                latest_rows = saldos_subset[saldos_subset["mes"] == last_month]
+                saldo_mes_total = float(latest_rows["saldo_programado"].sum())
+                no_cert_total = float(latest_rows["no_certificado"].sum())
+                saldo_acumulado_total = float(
+                    saldos_subset.groupby("generica")["saldo_acumulado"].last().sum()
+                )
+                month_label = MONTH_NAME_LABELS.get(last_month, f"Mes {last_month:02d}")
+                st.markdown(
+                    "**Análisis:** En "
+                    f"{month_label} los saldos programados seleccionados ascienden a S/ {saldo_mes_total:,.2f}, "
+                    f"con un acumulado anual de S/ {saldo_acumulado_total:,.2f} y S/ {no_cert_total:,.2f} identificados como no certificados."
+                )
 
 with tab_gestion:
     st.header("Ritmo requerido por proceso")
@@ -1624,7 +1702,8 @@ with tab_gestion:
             needed = max(pim_total - total, 0)
             required_avg = needed / remaining_months
             processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
-        ritmo_df = round_numeric_for_reporting(pd.DataFrame(processes))
+        ritmo_raw = pd.DataFrame(processes)
+        ritmo_df = round_numeric_for_reporting(ritmo_raw)
         if ritmo_df.empty:
             st.info("No hay información suficiente para calcular el ritmo requerido.")
         else:
@@ -1657,6 +1736,17 @@ with tab_gestion:
                 if fmt_ritmo:
                     ritmo_style = ritmo_style.format(fmt_ritmo)
                 st.dataframe(ritmo_style, use_container_width=True)
+        if not ritmo_raw.empty:
+            gap = (ritmo_raw["Necesario"] - ritmo_raw["Actual"]).clip(lower=0)
+            gap_idx = gap.idxmax()
+            proceso_objetivo = ritmo_raw.loc[gap_idx, "Proceso"]
+            brecha = float(gap.loc[gap_idx])
+            requerido_total = float(ritmo_raw["Necesario"].sum())
+            st.markdown(
+                "**Análisis:** Para completar el PIM se requiere ejecutar en promedio S/ "
+                f"{requerido_total:,.2f} mensuales; el mayor esfuerzo pendiente está en {proceso_objetivo} "
+                f"con una brecha de S/ {brecha:,.2f} frente al ritmo actual."
+            )
 
     st.header("Top áreas con menor avance")
     if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
@@ -1724,6 +1814,16 @@ with tab_gestion:
             if fmt_leader:
                 leader_style = leader_style.format(fmt_leader)
             st.dataframe(leader_style, use_container_width=True)
+            if not leaderboard_df.empty:
+                worst_row = leaderboard_df.iloc[0]
+                sec_label = str(worst_row.get("sec_func", "El primer sec_func")).strip()
+                avance_acum = float(worst_row.get("avance_acum_%", 0.0))
+                avance_mes = float(worst_row.get("avance_mes_%", 0.0))
+                st.markdown(
+                    "**Análisis:** El área "
+                    f"{sec_label} registra el menor avance acumulado ({avance_acum:.2f}%) y "
+                    f"solo {avance_mes:.2f}% en el mes, por lo que requiere seguimiento prioritario."
+                )
     else:
         st.info("Se requieren las columnas sec_func y mto_pim para construir el ranking.")
 
@@ -1982,6 +2082,16 @@ with tab_reporte:
             if fmt_reporte:
                 reporte_style = reporte_style.format(fmt_reporte)
             st.dataframe(reporte_style, use_container_width=True)
+            total_detalles = int(reporte_base.shape[0])
+            tot_pim = float(reporte_base.get("mto_pim", pd.Series(dtype=float)).sum()) if "mto_pim" in reporte_base else 0.0
+            tot_dev = float(reporte_base.get("devengado", pd.Series(dtype=float)).sum()) if "devengado" in reporte_base else 0.0
+            tot_cert = float(reporte_base.get("mto_certificado", pd.Series(dtype=float)).sum()) if "mto_certificado" in reporte_base else 0.0
+            avance_total = (tot_dev / tot_pim * 100.0) if tot_pim else 0.0
+            st.markdown(
+                "**Análisis:** El reporte detalla "
+                f"{total_detalles} combinaciones de sec_func y genérica; en conjunto acumulan S/ {tot_dev:,.2f} devengados "
+                f"sobre un PIM de S/ {tot_pim:,.2f} (avance {avance_total:.2f}%), con S/ {tot_cert:,.2f} certificados."
+            )
 
 with tab_descarga:
     st.header("Descarga de reportes")
@@ -2023,3 +2133,8 @@ with tab_descarga:
             file_name="siaf_resumen_avance.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+        if excel_engine:
+            st.markdown(
+                "**Análisis:** La descarga incluye todas las tablas mostradas en los apartados; "
+                f"se generó utilizando el motor de Excel `{excel_engine}`."
+            )
