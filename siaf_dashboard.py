@@ -1311,6 +1311,121 @@ if dev_cols and "mto_pim" in df_view.columns:
     dev_series["%_acumulado"] = dev_series["%_acumulado"].round(2)
     avance_series = dev_series[["mes", "devengado", "%_acumulado"]]
 
+saldos_monthly = pd.DataFrame()
+saldos_monthly_long = pd.DataFrame()
+saldos_cumulative_long = pd.DataFrame()
+if (
+    "generica" in df_view.columns
+    and program_month_map
+    and not df_view.empty
+):
+    working = df_view.copy()
+    working["_generica_label"] = (
+        working["generica"].fillna("Sin genérica").astype(str).str.strip()
+    )
+    working.loc[
+        working["_generica_label"].isin(["", "nan", "None"]), "_generica_label"
+    ] = "Sin genérica"
+
+    no_certificado_series = pd.to_numeric(
+        working.get("no_certificado", 0.0), errors="coerce"
+    ).fillna(0.0)
+    working["_no_certificado"] = no_certificado_series.astype(float)
+    no_cert_by_generica = (
+        working.groupby("_generica_label")['_no_certificado'].sum()
+        if not working.empty
+        else pd.Series(dtype=float)
+    )
+
+    month_records: List[Dict[str, float]] = []
+
+    for month in range(1, 13):
+        program_col = program_month_map.get(month)
+        if not program_col or program_col not in working.columns:
+            continue
+
+        dev_col = f"mto_devenga_{month:02d}"
+        program_series = pd.to_numeric(
+            working[program_col], errors="coerce"
+        ).fillna(0.0)
+        if dev_col in working.columns:
+            dev_series = pd.to_numeric(working[dev_col], errors="coerce").fillna(0.0)
+        else:
+            dev_series = pd.Series(0.0, index=working.index, dtype=float)
+
+        monthly_frame = pd.DataFrame(
+            {
+                "_generica_label": working["_generica_label"],
+                "_programado": program_series.astype(float),
+                "_devengado": dev_series.astype(float),
+            }
+        )
+        aggregated = (
+            monthly_frame.groupby("_generica_label")[["_programado", "_devengado"]].sum()
+            if not monthly_frame.empty
+            else pd.DataFrame(columns=["_programado", "_devengado"])
+        )
+
+        for gen_label, row in aggregated.iterrows():
+            label = str(gen_label).strip()
+            if not label or label.lower() in {"nan", "none"}:
+                label = "Sin genérica"
+
+            program_total = float(row["_programado"])
+            dev_total = float(row["_devengado"])
+            saldo_programado = program_total - dev_total
+            month_records.append(
+                {
+                    "generica": label,
+                    "mes": month,
+                    "Mes": MONTH_NAME_LABELS.get(month, f"Mes {month:02d}"),
+                    "programado": program_total,
+                    "devengado": dev_total,
+                    "saldo_programado": saldo_programado,
+                    "no_certificado": float(no_cert_by_generica.get(gen_label, 0.0)),
+                }
+            )
+
+    if month_records:
+        saldos_monthly = pd.DataFrame.from_records(month_records)
+        saldos_monthly = saldos_monthly.sort_values(["generica", "mes"])
+        saldos_monthly["saldo_acumulado"] = saldos_monthly.groupby("generica")[
+            "saldo_programado"
+        ].cumsum()
+
+        saldos_monthly_long = saldos_monthly.melt(
+            id_vars=[
+                "generica",
+                "mes",
+                "Mes",
+                "programado",
+                "devengado",
+                "saldo_acumulado",
+            ],
+            value_vars=["saldo_programado", "no_certificado"],
+            var_name="concepto",
+            value_name="monto",
+        )
+        saldos_monthly_long["concepto"] = saldos_monthly_long["concepto"].map(
+            {
+                "saldo_programado": "Saldo programado (Programado - Devengado)",
+                "no_certificado": "No certificado",
+            }
+        )
+
+        saldos_cumulative_long = saldos_monthly.melt(
+            id_vars=["generica", "mes", "Mes"],
+            value_vars=["saldo_acumulado", "no_certificado"],
+            var_name="concepto",
+            value_name="monto",
+        )
+        saldos_cumulative_long["concepto"] = saldos_cumulative_long["concepto"].map(
+            {
+                "saldo_acumulado": "Saldo programado acumulado",
+                "no_certificado": "No certificado",
+            }
+        )
+
 ritmo_df = pd.DataFrame()
 leaderboard_df = pd.DataFrame()
 reporte_siaf_df = pd.DataFrame()
@@ -1322,6 +1437,7 @@ proyeccion_wide = pd.DataFrame()
     tab_resumen,
     tab_consol,
     tab_avance,
+    tab_saldos,
     tab_gestion,
     tab_reporte,
     tab_descarga,
@@ -1329,6 +1445,7 @@ proyeccion_wide = pd.DataFrame()
     "Resumen ejecutivo",
     "Consolidado",
     "Avance mensual",
+    "Saldos",
     "Ritmo y alertas",
     "Reporte SIAF",
     "Descargas",
@@ -1417,6 +1534,81 @@ with tab_avance:
             if fmt_avance:
                 avance_style = avance_style.format(fmt_avance)
             st.dataframe(avance_style, use_container_width=True)
+
+with tab_saldos:
+    st.header("Saldos programados vs. ejecución")
+    if saldos_monthly_long.empty or saldos_cumulative_long.empty:
+        st.info(
+            "No hay información suficiente de programación mensual y devengado por genérica para calcular los saldos."
+        )
+    else:
+        genericas_disponibles = sorted(saldos_monthly["generica"].unique().tolist())
+        seleccion_genericas = st.multiselect(
+            "Genéricas de gasto",
+            options=genericas_disponibles,
+            default=genericas_disponibles,
+            key="saldos_generica_filter",
+        )
+
+        if not seleccion_genericas:
+            st.warning("Selecciona al menos una genérica para visualizar la evolución de saldos.")
+        else:
+            month_label_order = [
+                MONTH_NAME_LABELS.get(i, f"Mes {i:02d}") for i in range(1, 13)
+            ]
+
+            monthly_filtered = saldos_monthly_long[
+                saldos_monthly_long["generica"].isin(seleccion_genericas)
+            ]
+            cumulative_filtered = saldos_cumulative_long[
+                saldos_cumulative_long["generica"].isin(seleccion_genericas)
+            ]
+
+            st.subheader("Evolución mensual de saldos")
+            monthly_chart = (
+                alt.Chart(monthly_filtered)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
+                    y=alt.Y("monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
+                    color=alt.Color("generica:N", title="Genérica de gasto"),
+                    strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
+                    tooltip=[
+                        alt.Tooltip("Mes:N", title="Mes"),
+                        alt.Tooltip("generica:N", title="Genérica"),
+                        alt.Tooltip("concepto:N", title="Concepto"),
+                        alt.Tooltip("monto:Q", title="Monto", format=",.2f"),
+                        alt.Tooltip("programado:Q", title="Programado", format=",.2f"),
+                        alt.Tooltip("devengado:Q", title="Devengado", format=",.2f"),
+                    ],
+                )
+                .properties(width=620, height=320)
+            )
+            st.altair_chart(monthly_chart, use_container_width=True)
+
+            st.subheader("Saldo acumulado anual")
+            cumulative_chart = (
+                alt.Chart(cumulative_filtered)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
+                    y=alt.Y(
+                        "monto:Q",
+                        title="Monto acumulado (S/)",
+                        axis=alt.Axis(format=",.2f"),
+                    ),
+                    color=alt.Color("generica:N", title="Genérica de gasto"),
+                    strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
+                    tooltip=[
+                        alt.Tooltip("Mes:N", title="Mes"),
+                        alt.Tooltip("generica:N", title="Genérica"),
+                        alt.Tooltip("concepto:N", title="Concepto"),
+                        alt.Tooltip("monto:Q", title="Monto", format=",.2f"),
+                    ],
+                )
+                .properties(width=620, height=320)
+            )
+            st.altair_chart(cumulative_chart, use_container_width=True)
 
 with tab_gestion:
     st.header("Ritmo requerido por proceso")
