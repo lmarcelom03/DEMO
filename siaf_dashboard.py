@@ -1314,6 +1314,16 @@ if dev_cols and "mto_pim" in df_view.columns:
 saldos_monthly = pd.DataFrame()
 saldos_monthly_long = pd.DataFrame()
 saldos_cumulative_long = pd.DataFrame()
+simulation_detail_df = pd.DataFrame()
+simulation_overview_df = pd.DataFrame()
+simulation_per_gen_df = pd.DataFrame()
+simulation_metrics = {
+    "baseline_pct": 0.0,
+    "intelligent_pct": 0.0,
+    "intelligent_return": 0.0,
+    "total_pim": 0.0,
+    "projected_total": 0.0,
+}
 if (
     "generica" in df_view.columns
     and program_month_map
@@ -1426,6 +1436,166 @@ if (
             }
         )
 
+if (
+    "generica" in df_view.columns
+    and "mto_pim" in df_view.columns
+    and "devengado" in df_view.columns
+    and not df_view.empty
+):
+    gen_base = df_view.copy()
+    gen_base["_generica_label"] = (
+        gen_base["generica"].fillna("Sin genérica").astype(str).str.strip()
+    )
+    gen_base.loc[
+        gen_base["_generica_label"].isin(["", "nan", "None"]), "_generica_label"
+    ] = "Sin genérica"
+
+    numeric_candidates = [
+        "mto_pim",
+        "devengado",
+        "mto_certificado",
+        "no_certificado",
+        "programado_mes",
+        "devengado_mes",
+    ] + dev_cols
+    available_numeric = []
+    for col in numeric_candidates:
+        if col not in gen_base.columns:
+            continue
+        gen_base[col] = pd.to_numeric(gen_base[col], errors="coerce").fillna(0.0)
+        available_numeric.append(col)
+
+    if not available_numeric:
+        available_numeric = ["mto_pim", "devengado"]
+
+    aggregated_generica = (
+        gen_base.groupby("_generica_label", dropna=False)[available_numeric].sum().reset_index()
+    )
+    aggregated_generica = aggregated_generica.rename(columns={"_generica_label": "generica"})
+    aggregated_generica["generica"] = aggregated_generica["generica"].replace(
+        {"": "Sin genérica", "nan": "Sin genérica", "None": "Sin genérica"}
+    )
+
+    months_elapsed = max(int(current_month), 1)
+    remaining_months = max(12 - months_elapsed, 0)
+
+    aggregated_generica["promedio_mensual"] = (
+        aggregated_generica["devengado"] / months_elapsed
+    )
+    aggregated_generica["proyeccion_restante"] = (
+        aggregated_generica["promedio_mensual"] * remaining_months
+    )
+    aggregated_generica["proyeccion_total"] = (
+        aggregated_generica["devengado"] + aggregated_generica["proyeccion_restante"]
+    )
+    aggregated_generica["proyeccion_total"] = np.minimum(
+        aggregated_generica["proyeccion_total"], aggregated_generica["mto_pim"]
+    )
+    aggregated_generica["saldo_por_devolver"] = (
+        aggregated_generica["mto_pim"] - aggregated_generica["proyeccion_total"]
+    ).clip(lower=0.0)
+
+    if "no_certificado" not in aggregated_generica.columns:
+        aggregated_generica["no_certificado"] = 0.0
+    else:
+        aggregated_generica["no_certificado"] = aggregated_generica["no_certificado"].clip(lower=0.0)
+
+    eligible_return = np.minimum(
+        aggregated_generica["saldo_por_devolver"], aggregated_generica["no_certificado"]
+    )
+    aggregated_generica["retorno_sugerido"] = np.where(
+        eligible_return > 0,
+        eligible_return,
+        aggregated_generica["saldo_por_devolver"],
+    )
+    aggregated_generica["retorno_sugerido"] = aggregated_generica["retorno_sugerido"].clip(lower=0.0)
+
+    aggregated_generica["avance_actual_%"] = np.where(
+        aggregated_generica["mto_pim"] > 0,
+        aggregated_generica["devengado"] / aggregated_generica["mto_pim"] * 100.0,
+        0.0,
+    )
+    aggregated_generica["avance_proyectado_%"] = np.where(
+        aggregated_generica["mto_pim"] > 0,
+        aggregated_generica["proyeccion_total"] / aggregated_generica["mto_pim"] * 100.0,
+        0.0,
+    )
+
+    simulation_detail_df = aggregated_generica[
+        [
+            "generica",
+            "mto_pim",
+            "devengado",
+            "promedio_mensual",
+            "proyeccion_total",
+            "avance_proyectado_%",
+            "saldo_por_devolver",
+            "no_certificado",
+            "retorno_sugerido",
+        ]
+    ].copy()
+
+    total_pim = float(simulation_detail_df["mto_pim"].sum())
+    projected_total = float(simulation_detail_df["proyeccion_total"].sum())
+    baseline_pct = (projected_total / total_pim * 100.0) if total_pim else 0.0
+
+    intelligent_return = float(simulation_detail_df["retorno_sugerido"].sum())
+    intelligent_pim = total_pim - intelligent_return
+    if intelligent_pim > 0:
+        intelligent_projected = min(projected_total, intelligent_pim)
+        intelligent_pct = intelligent_projected / intelligent_pim * 100.0
+    else:
+        intelligent_projected = 0.0
+        intelligent_pct = 0.0
+
+    simulation_overview_df = pd.DataFrame(
+        [
+            {
+                "Escenario": "Sin devoluciones",
+                "PIM final": total_pim,
+                "Devengado proyectado": projected_total,
+                "% avance fin de año": baseline_pct,
+            },
+            {
+                "Escenario": "Devolución inteligente",
+                "PIM final": max(intelligent_pim, 0.0),
+                "Devengado proyectado": intelligent_projected,
+                "% avance fin de año": intelligent_pct,
+            },
+        ]
+    )
+
+    scenario_rows: List[Dict[str, float]] = []
+    for row in aggregated_generica.itertuples():
+        if row.retorno_sugerido <= 0:
+            continue
+        scenario_pim = total_pim - row.retorno_sugerido
+        if scenario_pim <= 0:
+            continue
+        scenario_projected = min(projected_total, scenario_pim)
+        scenario_pct = scenario_projected / scenario_pim * 100.0
+        scenario_rows.append(
+            {
+                "generica": row.generica,
+                "devolucion": row.retorno_sugerido,
+                "pim_final": scenario_pim,
+                "%_fin_ano": scenario_pct,
+                "delta_pct": scenario_pct - baseline_pct,
+            }
+        )
+
+    if scenario_rows:
+        simulation_per_gen_df = pd.DataFrame(scenario_rows)
+
+    simulation_metrics = {
+        "baseline_pct": baseline_pct,
+        "intelligent_pct": intelligent_pct,
+        "intelligent_return": intelligent_return,
+        "total_pim": total_pim,
+        "projected_total": projected_total,
+        "months_elapsed": months_elapsed,
+    }
+
 ritmo_df = pd.DataFrame()
 leaderboard_df = pd.DataFrame()
 reporte_siaf_df = pd.DataFrame()
@@ -1438,6 +1608,7 @@ proyeccion_wide = pd.DataFrame()
     tab_consol,
     tab_avance,
     tab_saldos,
+    tab_simulacion,
     tab_gestion,
     tab_reporte,
     tab_descarga,
@@ -1446,6 +1617,7 @@ proyeccion_wide = pd.DataFrame()
     "Consolidado",
     "Avance mensual",
     "Saldos",
+    "Simulaciones",
     "Ritmo y alertas",
     "Reporte SIAF",
     "Descargas",
@@ -1687,6 +1859,105 @@ with tab_saldos:
                     f"{month_label} los saldos programados seleccionados ascienden a S/ {saldo_mes_total:,.2f}, "
                     f"con un acumulado anual de S/ {saldo_acumulado_total:,.2f} y S/ {no_cert_total:,.2f} identificados como no certificados."
                 )
+
+with tab_simulacion:
+    st.header("Simulación de devolución de saldos")
+    if simulation_detail_df.empty or simulation_overview_df.empty:
+        st.info(
+            "No hay información suficiente para simular devoluciones; verifica que existan datos de PIM, devengado y saldos por genérica."
+        )
+    else:
+        st.markdown(
+            "Selecciona automáticamente las combinaciones de devolución que reducirían el PIM sin afectar la proyección de ejecución, "
+            "apoyándose en el promedio de devengado mensual observado."
+        )
+
+        detail_display = simulation_detail_df.rename(
+            columns={
+                "generica": "Genérica",
+                "mto_pim": "PIM",
+                "devengado": "Devengado acumulado",
+                "promedio_mensual": "Devengado mensual promedio",
+                "proyeccion_total": "Devengado proyectado",
+                "avance_proyectado_%": "% avance proyectado",
+                "saldo_por_devolver": "Saldo por devolver",
+                "no_certificado": "No certificado",
+                "retorno_sugerido": "Devolución sugerida",
+            }
+        )
+        detail_display = round_numeric_for_reporting(detail_display)
+        fmt_detail = build_style_formatters(detail_display)
+        detail_style = detail_display.style
+        if fmt_detail:
+            detail_style = detail_style.format(fmt_detail)
+        st.dataframe(detail_style, use_container_width=True)
+
+        st.subheader("Escenarios comparativos")
+        overview_display = round_numeric_for_reporting(simulation_overview_df.copy())
+        fmt_overview = build_style_formatters(overview_display)
+        overview_style = overview_display.style
+        if fmt_overview:
+            overview_style = overview_style.format(fmt_overview)
+        st.dataframe(overview_style, use_container_width=True)
+
+        if not simulation_per_gen_df.empty:
+            st.subheader("Impacto por genérica evaluada")
+            per_gen_display = simulation_per_gen_df.rename(
+                columns={
+                    "generica": "Genérica",
+                    "devolucion": "Devolución evaluada",
+                    "pim_final": "PIM final",
+                    "%_fin_ano": "% avance fin de año",
+                    "delta_pct": "Variación vs base (p.p.)",
+                }
+            )
+            per_gen_display = round_numeric_for_reporting(per_gen_display)
+            fmt_per_gen = build_style_formatters(per_gen_display)
+            per_gen_style = per_gen_display.style
+            if fmt_per_gen:
+                per_gen_style = per_gen_style.format(fmt_per_gen)
+            st.dataframe(per_gen_style, use_container_width=True)
+
+        baseline_pct = simulation_metrics.get("baseline_pct", 0.0)
+        intelligent_pct = simulation_metrics.get("intelligent_pct", baseline_pct)
+        intelligent_return = simulation_metrics.get("intelligent_return", 0.0)
+        projected_total = simulation_metrics.get("projected_total", 0.0)
+        total_pim = simulation_metrics.get("total_pim", 0.0)
+        month_label = MONTH_NAME_LABELS.get(int(current_month), f"Mes {int(current_month):02d}")
+
+        top_candidates = simulation_detail_df[simulation_detail_df["retorno_sugerido"] > 0]
+        top_candidates = top_candidates.sort_values("retorno_sugerido", ascending=False).head(3)
+        if intelligent_return > 0 and not top_candidates.empty:
+            bullets = "; ".join(
+                f"{row.generica}: S/ {row.retorno_sugerido:,.2f}" for row in top_candidates.itertuples()
+            )
+            analysis_text = (
+                "**Análisis:** Con el ritmo promedio observado hasta "
+                f"{month_label} se proyecta alcanzar un avance de {baseline_pct:.2f}% sobre un PIM de S/ {total_pim:,.2f}. "
+                f"Devolver inteligentemente S/ {intelligent_return:,.2f} concentrados en {bullets} elevaría la proyección a {intelligent_pct:.2f}% "
+                f"manteniendo un devengado estimado de S/ {projected_total:,.2f}."
+            )
+        elif intelligent_return > 0:
+            analysis_text = (
+                "**Análisis:** El algoritmo recomienda devolver S/ "
+                f"{intelligent_return:,.2f} para elevar el avance esperado de {baseline_pct:.2f}% a {intelligent_pct:.2f}% sin reducir la proyección de devengado."
+            )
+        else:
+            analysis_text = (
+                "**Análisis:** Con el ritmo actual se espera ejecutar S/ "
+                f"{projected_total:,.2f} ({baseline_pct:.2f}% del PIM), por lo que no se proyectan saldos sobrantes que ameriten devolución."
+            )
+
+        if not simulation_per_gen_df.empty:
+            best_delta = simulation_per_gen_df.sort_values("delta_pct", ascending=False).iloc[0]
+            if best_delta["delta_pct"] > 0:
+                analysis_text += (
+                    " Además, devolver únicamente en "
+                    f"{best_delta['generica']} implicaría un avance estimado de {best_delta['%_fin_ano']:.2f}% ("
+                    f"+{best_delta['delta_pct']:.2f} p.p. frente al escenario base)."
+                )
+
+        st.markdown(analysis_text)
 
 with tab_gestion:
     st.header("Ritmo requerido por proceso")
