@@ -1983,63 +1983,46 @@ with tab_simulacion:
                 "No hay genéricas con saldo disponible para devolver manualmente."
             )
         else:
-            st.subheader("Configurar devolución personalizada")
-            st.write(
-                "Ajusta los montos a devolver por genérica para simular un escenario personalizado. "
-                "Los valores iniciales corresponden a la recomendación automática y se restringen al saldo por devolver detectado."
+            st.subheader("Panel de control de devoluciones")
+            st.caption(
+                "Arrastra los deslizadores futuristas para decidir cuánto devolver en cada genérica. "
+                "El rango máximo se adapta al saldo disponible y el punto inicial sigue la recomendación inteligente."
             )
 
-            editor_df = adjustable_rows[[
-                "generica",
-                "saldo_por_devolver",
-                "retorno_sugerido",
-            ]].copy()
-            editor_df.rename(
-                columns={
-                    "generica": "Genérica",
-                    "saldo_por_devolver": "Saldo disponible",
-                    "retorno_sugerido": "Devolución sugerida",
-                },
-                inplace=True,
-            )
-            editor_df["Devolución personalizada"] = editor_df.apply(
-                lambda row: min(float(row["Devolución sugerida"]), float(row["Saldo disponible"])),
-                axis=1,
-            )
+            slider_columns = st.columns(min(3, len(adjustable_rows)))
+            for idx, row in enumerate(adjustable_rows.itertuples()):
+                gen_value = str(row.generica).strip() or "Genérica"
+                max_available = float(row.saldo_por_devolver)
+                suggested = float(row.retorno_sugerido)
+                if max_available <= 0:
+                    continue
 
-            edited_returns = st.data_editor(
-                editor_df,
-                hide_index=True,
-                key="sim_custom_returns",
-                column_config={
-                    "Genérica": st.column_config.TextColumn("Genérica", disabled=True),
-                    "Saldo disponible": st.column_config.NumberColumn(
-                        "Saldo disponible",
-                        disabled=True,
-                        format="%0.2f",
-                    ),
-                    "Devolución sugerida": st.column_config.NumberColumn(
-                        "Devolución sugerida",
-                        disabled=True,
-                        format="%0.2f",
-                    ),
-                    "Devolución personalizada": st.column_config.NumberColumn(
+                col = slider_columns[idx % len(slider_columns)]
+                default = min(suggested, max_available)
+                key_suffix = abs(hash(("sim", gen_value))) % 10_000_000
+                slider_key = f"sim_slider_{key_suffix}"
+                saved_value = float(st.session_state.get(slider_key, default))
+                saved_value = float(np.clip(saved_value, 0.0, max_available))
+                step = max(max_available / 40.0, 1.0)
+
+                with col:
+                    st.markdown(f"**{gen_value}**")
+                    slider_val = st.slider(
                         "Devolución personalizada",
-                        help="Define cuánto devolverías en esta genérica (se limita al saldo disponible).",
-                        format="%0.2f",
                         min_value=0.0,
-                    ),
-                },
-            )
-
-            if edited_returns is not None and not edited_returns.empty:
-                for _, row in edited_returns.iterrows():
-                    gen_value = str(row.get("Genérica", "")).strip()
-                    if not gen_value:
-                        continue
-                    max_available = float(row.get("Saldo disponible", 0.0) or 0.0)
-                    desired = float(row.get("Devolución personalizada", 0.0) or 0.0)
-                    custom_returns[gen_value] = float(np.clip(desired, 0.0, max_available))
+                        max_value=float(max_available),
+                        value=saved_value,
+                        step=float(step),
+                        format="S/ %0.0f",
+                        key=slider_key,
+                    )
+                    custom_returns[gen_value] = float(slider_val)
+                    st.progress(
+                        0.0 if max_available <= 0 else min(slider_val / max_available, 1.0)
+                    )
+                    st.caption(
+                        f"Sugerido: S/ {suggested:,.2f} · Disponible: S/ {max_available:,.2f}"
+                    )
 
         overview_rows = simulation_overview_df.to_dict("records")
         custom_return_total = float(sum(custom_returns.values())) if custom_returns else 0.0
@@ -2060,6 +2043,24 @@ with tab_simulacion:
                     "% avance fin de año": custom_pct,
                 }
             )
+
+        if overview_rows:
+            st.subheader("Marcador holográfico")
+            scoreboard_cols = st.columns(len(overview_rows))
+            for idx, record in enumerate(overview_rows):
+                avance = float(record.get("% avance fin de año", 0.0))
+                pim_final = float(record.get("PIM final", 0.0))
+                proyectado = float(record.get("Devengado proyectado", 0.0))
+                delta = proyectado - projected_total if "projected_total" in locals() else proyectado
+                with scoreboard_cols[idx]:
+                    st.metric(
+                        record.get("Escenario", f"Escenario {idx + 1}"),
+                        f"{avance:.2f}%",
+                        delta=f"Δ devengado: S/ {delta:,.0f}",
+                    )
+                    st.caption(
+                        f"PIM final: S/ {pim_final:,.0f} · Devengado proyectado: S/ {proyectado:,.0f}"
+                    )
 
         for row in simulation_detail_df.itertuples():
             suggested = float(row.retorno_sugerido)
@@ -2090,7 +2091,7 @@ with tab_simulacion:
                 }
             )
 
-        st.subheader("Escenarios comparativos")
+        st.subheader("Tabla táctica de escenarios")
         overview_df = pd.DataFrame(overview_rows)
         overview_display = round_numeric_for_reporting(overview_df.copy())
         fmt_overview = build_style_formatters(overview_display)
@@ -2099,7 +2100,11 @@ with tab_simulacion:
             overview_style = overview_style.format(fmt_overview)
         st.dataframe(overview_style, use_container_width=True)
 
-        st.subheader("Visualización interactiva de escenarios")
+        st.subheader("Arena interactiva de escenarios")
+        st.caption(
+            "Explora cómo cambia el tablero al alternar cada indicador. Usa la leyenda para resaltar un escenario y observa"
+            " cómo responden las métricas como si estuvieras en un panel de estrategia."
+        )
         chart_rows = []
         for record in overview_rows:
             chart_rows.extend(
@@ -2143,18 +2148,25 @@ with tab_simulacion:
                     (scenarios_chart_df["Tipo"] == "Monto")
                     & (scenarios_chart_df["Indicador"] == selected_metric)
                 ]
+                legend_focus = alt.selection_point(fields=["Escenario"], bind="legend")
                 metric_chart = (
                     alt.Chart(metric_chart_source)
-                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                     .encode(
                         x=alt.X("Escenario:N", title="Escenario"),
                         y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format=",.2f")),
-                        color=alt.Color("Escenario:N", title="Escenario", scale=alt.Scale(scheme="tableau20")),
+                        color=alt.Color(
+                            "Escenario:N",
+                            title="Escenario",
+                            scale=alt.Scale(range=["#3a86ff", "#8338ec", "#ff006e", "#fb5607"]),
+                        ),
+                        opacity=alt.condition(legend_focus, alt.value(1.0), alt.value(0.35)),
                         tooltip=[
                             alt.Tooltip("Escenario:N", title="Escenario"),
                             alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format=",.2f"),
                         ],
                     )
+                    .add_params(legend_focus)
                     .properties(height=300)
                     .interactive()
                 )
@@ -2163,11 +2175,15 @@ with tab_simulacion:
             if percent_options:
                 percent_chart = (
                     alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Porcentaje"])
-                    .mark_line(point=alt.OverlayMarkDef(size=80, filled=True))
+                    .mark_line(point=alt.OverlayMarkDef(size=100, filled=True, color="#ffbe0b"), strokeWidth=4)
                     .encode(
                         x=alt.X("Escenario:N", title="Escenario"),
                         y=alt.Y("Monto:Q", title="% avance fin de año", axis=alt.Axis(format=".2f")),
-                        color=alt.Color("Escenario:N", title="Escenario", scale=alt.Scale(scheme="turbo")),
+                        color=alt.Color(
+                            "Escenario:N",
+                            title="Escenario",
+                            scale=alt.Scale(range=["#ffbe0b", "#fb5607", "#ff006e", "#8338ec"]),
+                        ),
                         tooltip=[
                             alt.Tooltip("Escenario:N", title="Escenario"),
                             alt.Tooltip("Monto:Q", title="Avance (%)", format=".2f"),
@@ -2175,6 +2191,7 @@ with tab_simulacion:
                     )
                     .properties(height=260)
                     .interactive()
+                    .configure_view(strokeOpacity=0)
                 )
                 st.altair_chart(percent_chart, use_container_width=True)
 
@@ -2201,12 +2218,16 @@ with tab_simulacion:
                 returns_chart = (
                     alt.Chart(returns_chart_df)
                     .add_selection(hover_selection)
-                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                     .encode(
                         x=alt.X("Genérica:N", sort="-y", title="Genérica"),
                         y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
-                        color=alt.Color("Tipo:N", title="Escenario", scale=alt.Scale(scheme="plasma")),
-                        opacity=alt.condition(hover_selection, alt.value(1.0), alt.value(0.6)),
+                        color=alt.Color(
+                            "Tipo:N",
+                            title="Escenario",
+                            scale=alt.Scale(range=["#4cc9f0", "#f72585"]),
+                        ),
+                        opacity=alt.condition(hover_selection, alt.value(1.0), alt.value(0.45)),
                         tooltip=[
                             alt.Tooltip("Genérica:N", title="Genérica"),
                             alt.Tooltip("Tipo:N", title="Escenario"),
@@ -2215,6 +2236,7 @@ with tab_simulacion:
                     )
                     .properties(height=320)
                     .interactive()
+                    .configure_view(strokeOpacity=0)
                 )
                 st.altair_chart(returns_chart, use_container_width=True)
 
@@ -2340,41 +2362,45 @@ with tab_gestion:
             st.info("No hay información suficiente para calcular el ritmo requerido.")
         else:
             st.caption(
-                "Ajusta el impulso mensual por proceso para visualizar cómo cambia la brecha entre el ritmo actual y el necesario."
+                "Activa la consola interactiva para impulsar cada proceso. Las barras muestran cuánto te falta para alcanzar el ritmo ideal y los deslizadores aplican un turbo mensual."
             )
-            editor_source = ritmo_raw.copy()
-            editor_source["Impulso manual (S/)"] = 0.0
-            edited = st.data_editor(
-                editor_source,
-                hide_index=True,
-                key="ritmo_editor",
-                column_config={
-                    "Proceso": st.column_config.TextColumn("Proceso", disabled=True),
-                    "Actual": st.column_config.NumberColumn(
-                        "Ritmo actual (S/)",
-                        disabled=True,
-                        format="%0.2f",
-                    ),
-                    "Necesario": st.column_config.NumberColumn(
-                        "Ritmo necesario (S/)",
-                        disabled=True,
-                        format="%0.2f",
-                    ),
-                    "Impulso manual (S/)": st.column_config.NumberColumn(
-                        "Impulso manual (S/)",
-                        help="Ingresa cuánto adicional se podría ejecutar mensualmente en cada proceso.",
-                        step=1000.0,
-                        format="%0.2f",
-                    ),
-                },
-            )
+            impulse_values: List[float] = []
+            control_columns = st.columns(len(ritmo_raw))
+            for idx, row in ritmo_raw.iterrows():
+                proceso = str(row["Proceso"])
+                actual = float(row["Actual"])
+                necesario = float(row["Necesario"])
+                gap = max(necesario - actual, 0.0)
+                max_slider = float(max(necesario * 1.5, actual * 1.5, gap * 2.0, 1.0))
+                key_suffix = abs(hash(("ritmo", proceso))) % 10_000_000
+                slider_key = f"ritmo_impulso_{key_suffix}"
+                saved_value = float(st.session_state.get(slider_key, gap))
+                saved_value = float(np.clip(saved_value, 0.0, max_slider))
+                step = max(max_slider / 40.0, 1.0)
 
-            if edited is None or edited.empty:
-                impulso = pd.Series(0.0, index=ritmo_raw.index)
-            else:
-                impulso = pd.to_numeric(edited.get("Impulso manual (S/)", 0.0), errors="coerce").fillna(0.0)
+                col = control_columns[idx % len(control_columns)]
+                with col:
+                    st.markdown(f"**{proceso}**")
+                    st.metric("Ritmo actual", f"S/ {actual:,.2f}", delta=f"Meta: S/ {necesario:,.2f}")
+                    progress_ratio = 1.0 if necesario <= 0 else min(actual / necesario, 1.0)
+                    st.progress(progress_ratio)
+                    slider_val = st.slider(
+                        "Impulso mensual",
+                        min_value=0.0,
+                        max_value=max_slider,
+                        value=saved_value,
+                        step=float(step),
+                        format="S/ %0.0f",
+                        key=slider_key,
+                    )
+                    impulse_values.append(float(slider_val))
+                    st.caption(f"Brecha actual: S/ {gap:,.2f}")
+
+            if len(impulse_values) < len(ritmo_raw):
+                impulse_values.extend([0.0] * (len(ritmo_raw) - len(impulse_values)))
+
             ritmo_dynamic = ritmo_raw.copy()
-            ritmo_dynamic["Impulso manual (S/)"] = impulso
+            ritmo_dynamic["Impulso manual (S/)"] = impulse_values
             ritmo_dynamic["Ritmo ajustado"] = ritmo_dynamic["Actual"] + ritmo_dynamic["Impulso manual (S/)"]
             ritmo_dynamic["Brecha restante (S/)"] = (
                 ritmo_dynamic["Necesario"] - ritmo_dynamic["Ritmo ajustado"]
@@ -2395,6 +2421,7 @@ with tab_gestion:
                 ritmo_style = ritmo_style.format(fmt_ritmo)
             st.dataframe(ritmo_style, use_container_width=True)
 
+            st.markdown("### Tablero visual neón")
             ritmo_melt = ritmo_dynamic.melt(
                 "Proceso",
                 value_vars=["Actual", "Necesario", "Ritmo ajustado"],
@@ -2403,14 +2430,14 @@ with tab_gestion:
             )
             ritmo_chart = (
                 alt.Chart(ritmo_melt)
-                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                 .encode(
                     x=alt.X("Proceso:N", title="Proceso"),
                     y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format=",.2f")),
                     color=alt.Color(
                         "Escenario:N",
                         title="Escenario",
-                        scale=alt.Scale(scheme="spectral"),
+                        scale=alt.Scale(range=["#00bbf9", "#f72585", "#fee440"]),
                     ),
                     tooltip=[
                         alt.Tooltip("Proceso:N", title="Proceso"),
@@ -2419,9 +2446,31 @@ with tab_gestion:
                     ],
                 )
                 .properties(height=320)
+                .configure_view(strokeOpacity=0)
                 .interactive()
             )
             st.altair_chart(ritmo_chart, use_container_width=True)
+
+            brecha_chart_df = ritmo_dynamic.copy()
+            brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha restante (S/)"]
+            brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha positiva"].clip(lower=0.0)
+            if brecha_chart_df["Brecha positiva"].sum() > 0:
+                brecha_chart = (
+                    alt.Chart(brecha_chart_df)
+                    .mark_area(line={"color": "#ff006e", "size": 3})
+                    .encode(
+                        x=alt.X("Proceso:N", title="Proceso"),
+                        y=alt.Y("Brecha positiva:Q", title="Brecha pendiente (S/)", axis=alt.Axis(format=",.2f")),
+                        color=alt.value("#ff006e"),
+                        tooltip=[
+                            alt.Tooltip("Proceso:N", title="Proceso"),
+                            alt.Tooltip("Brecha positiva:Q", title="Brecha", format=",.2f"),
+                        ],
+                    )
+                    .properties(height=220)
+                    .interactive()
+                )
+                st.altair_chart(brecha_chart, use_container_width=True)
 
             if not ritmo_dynamic.empty:
                 brechas = ritmo_dynamic["Brecha restante (S/)"]
