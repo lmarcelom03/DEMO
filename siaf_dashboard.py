@@ -2424,96 +2424,173 @@ with tab_simulacion:
 
             neon_subheader("Arena interactiva de escenarios", icon="🕹️")
             st.caption(
-                "Explora cómo cambia el tablero al alternar cada indicador. Usa la leyenda para resaltar un escenario como si estuvieras en un panel de estrategia."
+                "Activa el tablero holográfico para comparar cómo evoluciona el devengado histórico y la proyección futura en cada escenario."
             )
-            chart_rows = []
+            month_label_order = [
+                MONTH_NAME_LABELS.get(i, f"Mes {i:02d}") for i in range(1, 13)
+            ]
+            months_elapsed = max(int(current_month), 1)
+            monthly_actual_map: Dict[int, float] = {}
+            if not avance_series.empty:
+                for row in avance_series.itertuples():
+                    month_val = getattr(row, "mes", None)
+                    if pd.isna(month_val):
+                        continue
+                    dev_val = float(getattr(row, "devengado", 0.0) or 0.0)
+                    monthly_actual_map[int(month_val)] = dev_val
+            executed_total = float(simulation_detail_df["devengado"].sum()) if not simulation_detail_df.empty else 0.0
+            if not monthly_actual_map and months_elapsed > 0:
+                even_value = executed_total / months_elapsed if months_elapsed else 0.0
+                monthly_actual_map = {m: even_value for m in range(1, months_elapsed + 1)}
+            for m in range(1, months_elapsed + 1):
+                monthly_actual_map.setdefault(m, 0.0)
+
+            scenario_series_map: Dict[str, pd.DataFrame] = {}
+
+            def _build_scenario_series(name: str, pim_final: float, projected_total: float) -> pd.DataFrame:
+                pim_final = float(pim_final or 0.0)
+                projected_total = float(projected_total or 0.0)
+                rows: List[Dict[str, float]] = []
+                cumulative = 0.0
+                historical_total = 0.0
+                for month in range(1, months_elapsed + 1):
+                    value = float(monthly_actual_map.get(month, 0.0))
+                    historical_total += value
+                    cumulative += value
+                    rows.append(
+                        {
+                            "Escenario": name,
+                            "Mes": MONTH_NAME_LABELS.get(month, f"Mes {month:02d}"),
+                            "MesIndex": month,
+                            "Tipo": "Histórico",
+                            "Devengado": value,
+                            "Acumulado": cumulative,
+                            "Avance_pct": (cumulative / pim_final * 100.0) if pim_final > 0 else 0.0,
+                        }
+                    )
+                future_months = list(range(months_elapsed + 1, 13))
+                future_total = max(projected_total - historical_total, 0.0)
+                if future_months:
+                    if rows:
+                        last_hist = rows[-1].copy()
+                        last_hist["Tipo"] = "Proyección"
+                        last_hist["Devengado"] = 0.0
+                        rows.append(last_hist)
+                    if future_total <= 0:
+                        future_values = [0.0] * len(future_months)
+                    else:
+                        base_value = future_total / len(future_months)
+                        future_values = [base_value] * len(future_months)
+                        adjustment = future_total - sum(future_values)
+                        if future_values:
+                            future_values[-1] += adjustment
+                        future_values = [max(v, 0.0) for v in future_values]
+                    for month, value in zip(future_months, future_values):
+                        cumulative += float(value)
+                        rows.append(
+                            {
+                                "Escenario": name,
+                                "Mes": MONTH_NAME_LABELS.get(month, f"Mes {month:02d}"),
+                                "MesIndex": month,
+                                "Tipo": "Proyección",
+                                "Devengado": float(value),
+                                "Acumulado": cumulative,
+                                "Avance_pct": (cumulative / pim_final * 100.0) if pim_final > 0 else 0.0,
+                            }
+                        )
+                return pd.DataFrame(rows)
+
             for record in overview_rows:
-                chart_rows.extend(
-                    [
-                        {
-                            "Escenario": record["Escenario"],
-                            "Indicador": "PIM final",
-                            "Monto": float(record.get("PIM final", 0.0)),
-                            "Tipo": "Monto",
-                        },
-                        {
-                            "Escenario": record["Escenario"],
-                            "Indicador": "Devengado proyectado",
-                            "Monto": float(record.get("Devengado proyectado", 0.0)),
-                            "Tipo": "Monto",
-                        },
-                        {
-                            "Escenario": record["Escenario"],
-                            "Indicador": "% avance fin de año",
-                            "Monto": float(record.get("% avance fin de año", 0.0)),
-                            "Tipo": "Porcentaje",
-                        },
-                    ]
+                name = str(record.get("Escenario", "Escenario")).strip()
+                pim_final = float(record.get("PIM final", 0.0))
+                projected_total = float(record.get("Devengado proyectado", 0.0))
+                scenario_df = _build_scenario_series(name, pim_final, projected_total)
+                if not scenario_df.empty:
+                    scenario_series_map[name] = scenario_df
+
+            if scenario_series_map:
+                scenario_names = list(scenario_series_map.keys())
+                selected_scenario = st.radio(
+                    "Selecciona el escenario a proyectar",
+                    scenario_names,
+                    horizontal=True,
+                    key="arena_scenario_selector",
                 )
-            scenarios_chart_df = pd.DataFrame(chart_rows)
-            if not scenarios_chart_df.empty:
-                metric_options = (
-                    scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Monto", "Indicador"].unique().tolist()
+                selected_df = scenario_series_map[selected_scenario].sort_values("MesIndex")
+                trajectory_chart = (
+                    alt.Chart(selected_df)
+                    .mark_line(strokeWidth=4)
+                    .encode(
+                        x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
+                        y=alt.Y(
+                            "Acumulado:Q",
+                            title="Devengado acumulado (S/)",
+                            axis=alt.Axis(format="$,.2f"),
+                        ),
+                        color=alt.Color(
+                            "Tipo:N",
+                            title="Tramo",
+                            scale=alt.Scale(domain=["Histórico", "Proyección"], range=["#00eaff", "#ff296d"]),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("Mes", title="Mes"),
+                            alt.Tooltip("Tipo", title="Tramo"),
+                            alt.Tooltip("Acumulado", title="Devengado acumulado", format="$,.2f"),
+                            alt.Tooltip("Avance_pct", title="Avance (%)", format=".2f"),
+                        ],
+                        detail="Escenario:N",
+                    )
+                    .properties(height=320)
                 )
-                percent_options = (
-                    scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Porcentaje", "Indicador"].unique().tolist()
+                trajectory_points = (
+                    alt.Chart(selected_df)
+                    .mark_point(filled=True, size=100, color="#ffe45c")
+                    .encode(
+                        x=alt.X("Mes:N", sort=month_label_order),
+                        y=alt.Y("Acumulado:Q"),
+                        tooltip=[
+                            alt.Tooltip("Mes", title="Mes"),
+                            alt.Tooltip("Tipo", title="Tramo"),
+                            alt.Tooltip("Devengado", title="Devengado del mes", format="$,.2f"),
+                            alt.Tooltip("Acumulado", title="Devengado acumulado", format="$,.2f"),
+                            alt.Tooltip("Avance_pct", title="Avance (%)", format=".2f"),
+                        ],
+                    )
+                )
+                st.altair_chart(
+                    style_arcade_chart(trajectory_chart + trajectory_points),
+                    use_container_width=True,
                 )
 
-                if metric_options:
-                    selected_metric = st.selectbox(
-                        "Indicador a comparar",
-                        metric_options,
-                        key="simulaciones_metric_selector",
+                avance_chart = (
+                    alt.Chart(selected_df)
+                    .mark_line(strokeWidth=3)
+                    .encode(
+                        x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
+                        y=alt.Y(
+                            "Avance_pct:Q",
+                            title="Avance acumulado (%)",
+                            axis=alt.Axis(format=".2f"),
+                        ),
+                        color=alt.Color(
+                            "Tipo:N",
+                            title="Tramo",
+                            scale=alt.Scale(domain=["Histórico", "Proyección"], range=["#19f5aa", "#ff9d00"]),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("Mes", title="Mes"),
+                            alt.Tooltip("Tipo", title="Tramo"),
+                            alt.Tooltip("Avance_pct", title="Avance (%)", format=".2f"),
+                        ],
+                        detail="Escenario:N",
                     )
-                    metric_chart_source = scenarios_chart_df[
-                        (scenarios_chart_df["Tipo"] == "Monto")
-                        & (scenarios_chart_df["Indicador"] == selected_metric)
-                    ]
-                    legend_focus = alt.selection_point(fields=["Escenario"], bind="legend")
-                    metric_chart = (
-                        alt.Chart(metric_chart_source)
-                        .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
-                        .encode(
-                            x=alt.X("Escenario:N", title="Escenario"),
-                            y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format="$,.2f")),
-                            color=alt.Color(
-                                "Escenario:N",
-                                title="Escenario",
-                                scale=alt.Scale(range=["#00eaff", "#ff296d", "#ffe45c", "#19f5aa"]),
-                            ),
-                            opacity=alt.condition(legend_focus, alt.value(1.0), alt.value(0.35)),
-                            tooltip=[
-                                alt.Tooltip("Escenario:N", title="Escenario"),
-                                alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format="$,.2f"),
-                            ],
-                        )
-                        .add_params(legend_focus)
-                        .properties(height=300)
-                        .interactive()
-                    )
-                    st.altair_chart(style_arcade_chart(metric_chart), use_container_width=True)
-
-                if percent_options:
-                    percent_chart = (
-                        alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Porcentaje"])
-                        .mark_line(point=alt.OverlayMarkDef(size=100, filled=True, color="#ffe45c"), strokeWidth=4)
-                        .encode(
-                            x=alt.X("Escenario:N", title="Escenario"),
-                            y=alt.Y("Monto:Q", title="% avance fin de año", axis=alt.Axis(format=".2f")),
-                            color=alt.Color(
-                                "Escenario:N",
-                                title="Escenario",
-                                scale=alt.Scale(range=["#ffe45c", "#ff296d", "#00eaff", "#b388ff"]),
-                            ),
-                            tooltip=[
-                                alt.Tooltip("Escenario:N", title="Escenario"),
-                                alt.Tooltip("Monto:Q", title="Avance (%)", format=".2f"),
-                            ],
-                        )
-                        .properties(height=260)
-                        .interactive()
-                    )
-                    st.altair_chart(style_arcade_chart(percent_chart), use_container_width=True)
+                    .properties(height=220)
+                )
+                st.altair_chart(style_arcade_chart(avance_chart), use_container_width=True)
+            else:
+                st.info(
+                    "No se pudo generar la línea histórica y proyectada porque no hay datos mensuales de devengado disponibles."
+                )
 
             if custom_returns:
                 chart_return_rows = []
