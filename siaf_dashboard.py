@@ -3,6 +3,7 @@
 import base64
 import io
 import re
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -37,9 +38,19 @@ def _list_excel_candidates(folder: Path) -> List[Path]:
 EXCEL_CANDIDATES = _list_excel_candidates(EXCEL_SOURCE_DIR)
 LATEST_EXCEL = EXCEL_CANDIDATES[0] if EXCEL_CANDIDATES else None
 
-PRIMARY_COLOR = "#c62828"
-SECONDARY_COLOR = "#fbe9e7"
-ACCENT_COLOR = "#0f4c81"
+PRIMARY_COLOR = "#ff296d"
+SECONDARY_COLOR = "#0b0f2f"
+ACCENT_COLOR = "#00eaff"
+GLOW_COLOR = "#b388ff"
+
+ARCADE_COLOR_RANGE = [
+    "#00eaff",
+    "#ff296d",
+    "#ffe45c",
+    "#19f5aa",
+    "#b388ff",
+    "#ff9d00",
+]
 
 try:
     import xlsxwriter  # type: ignore
@@ -87,97 +98,333 @@ LOGO_IMAGE = base64.b64decode(LOGO_BASE64)
 
 APP_CSS = f"""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Rajdhani:wght@400;600;700&display=swap');
+
 :root {{
     --primary-color: {PRIMARY_COLOR};
     --accent-color: {ACCENT_COLOR};
     --secondary-color: {SECONDARY_COLOR};
+    --surface-color: rgba(16, 21, 46, 0.92);
+    --panel-border: rgba(0, 234, 255, 0.35);
+    --glow-color: {GLOW_COLOR};
 }}
 
-[data-testid="stAppViewContainer"] {{
-    background: linear-gradient(135deg, var(--secondary-color) 0%, #ffffff 55%);
+html, body, [data-testid="stAppViewContainer"] {{
+    background: radial-gradient(circle at 20% 20%, rgba(0, 234, 255, 0.18), rgba(11, 15, 47, 0.95) 55%) fixed;
+    color: #f1f5ff;
+    font-family: 'Rajdhani', sans-serif;
 }}
 
 [data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, rgba(198,40,40,0.12), rgba(198,40,40,0));
+    background: linear-gradient(180deg, rgba(19, 32, 67, 0.95), rgba(11, 15, 47, 0.85));
+    border-right: 1px solid rgba(0, 234, 255, 0.25);
+}}
+
+[data-testid="stSidebar"] * {{
+    color: #e3f6ff !important;
 }}
 
 .app-title {{
-    font-size: 2.4rem;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 2.8rem;
     font-weight: 700;
-    margin-bottom: 0.15rem;
-    color: var(--primary-color);
+    margin-bottom: 0.1rem;
+    color: var(--accent-color);
+    text-shadow: 0 0 18px rgba(0, 234, 255, 0.65);
 }}
 
 .app-subtitle {{
-    color: var(--accent-color);
-    font-size: 1.1rem;
+    color: #f06292;
+    font-size: 1.15rem;
     margin-top: 0;
     margin-bottom: 0.6rem;
+    letter-spacing: 0.12rem;
 }}
 
 .app-description {{
-    color: #4a4a4a;
-    font-size: 1.0rem;
-    line-height: 1.55rem;
+    color: #d0dcff;
+    font-size: 1.02rem;
+    line-height: 1.6rem;
+    background: rgba(15, 20, 45, 0.65);
+    padding: 0.85rem 1.2rem;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 234, 255, 0.15);
+    box-shadow: inset 0 0 14px rgba(255, 41, 109, 0.18);
 }}
 
 .stTabs [data-baseweb="tab"] {{
-    color: var(--accent-color);
-    font-weight: 600;
+    color: rgba(227, 246, 255, 0.85);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08rem;
+    font-family: 'Orbitron', sans-serif;
 }}
 
 .stTabs [data-baseweb="tab"]:hover {{
-    color: var(--primary-color);
-    background-color: rgba(198, 40, 40, 0.08);
+    color: var(--accent-color);
 }}
 
 .stTabs [data-baseweb="tab"][aria-selected="true"] {{
     color: var(--primary-color);
-    border-bottom: 3px solid var(--primary-color);
+    border-bottom: 4px solid var(--accent-color);
+    text-shadow: 0 0 8px rgba(0, 234, 255, 0.55);
 }}
 
 [data-testid="stMetricValue"] {{
-    color: var(--primary-color);
+    color: #ffe45c;
+    font-family: 'Orbitron', sans-serif;
+    text-shadow: 0 0 15px rgba(255, 228, 92, 0.55);
 }}
 
 [data-testid="stMetricLabel"] {{
-    color: #5c5c5c;
+    color: rgba(227, 246, 255, 0.75);
+    font-weight: 600;
+    letter-spacing: 0.06rem;
 }}
 
 .stRadio > div {{
-    background-color: rgba(15,76,129,0.07);
+    background-color: rgba(0, 234, 255, 0.08);
     border-radius: 999px;
-    padding: 0.35rem 0.75rem;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid rgba(0, 234, 255, 0.25);
 }}
 
 .stRadio [data-baseweb="radio"] label span {{
     font-weight: 600;
-    color: var(--accent-color);
+    color: rgba(227, 246, 255, 0.85);
 }}
 
 .stRadio [data-baseweb="radio"] input:checked + span {{
-    color: var(--primary-color);
+    color: var(--accent-color);
+    text-shadow: 0 0 10px rgba(0, 234, 255, 0.65);
 }}
 
-.stButton>button {{
-    background-color: var(--primary-color);
+.stButton>button, .stDownloadButton>button {{
+    background: linear-gradient(135deg, var(--accent-color), var(--primary-color));
     color: #ffffff;
-    font-weight: 600;
-    border: none;
-    box-shadow: 0 6px 16px rgba(198, 40, 40, 0.25);
+    font-weight: 700;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 0 12px 28px rgba(0, 234, 255, 0.25);
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.08rem;
 }}
 
-.stButton>button:hover {{
-    background-color: #a12020;
+.stButton>button:hover, .stDownloadButton>button:hover {{
+    box-shadow: 0 18px 42px rgba(255, 41, 109, 0.35);
 }}
-</style>
-"""
+
+.neon-card {{
+    background: linear-gradient(145deg, rgba(11, 16, 38, 0.96), rgba(21, 37, 71, 0.92));
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    padding: 1.6rem 1.8rem;
+    margin-bottom: 1.4rem;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 18px 32px rgba(0, 0, 0, 0.35), inset 0 0 22px rgba(0, 234, 255, 0.08);
+}}
+
+.neon-card:before {{
+    content: "";
+    position: absolute;
+    inset: -80px;
+    background: conic-gradient(from 0deg, rgba(0, 234, 255, 0.35), transparent 45%, rgba(255, 41, 109, 0.35), transparent 75%);
+    filter: blur(60px);
+    opacity: 0.5;
+    animation: pulseGlow 12s linear infinite;
+}}
+
+.neon-card:after {{
+    content: "";
+    position: absolute;
+    inset: 2px;
+    border-radius: 16px;
+    background: rgba(5, 8, 22, 0.88);
+    box-shadow: inset 0 0 18px rgba(0, 234, 255, 0.08);
+}}
+
+.neon-card > * {{
+    position: relative;
+    z-index: 2;
+}}
+
+.panel-header {{
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.1rem;
+}}
+
+.panel-icon {{
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 1.6rem;
+    background: rgba(0, 234, 255, 0.15);
+    border: 1px solid rgba(0, 234, 255, 0.45);
+    box-shadow: 0 0 18px rgba(0, 234, 255, 0.35);
+}}
+
+.panel-title {{
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.55rem;
+    letter-spacing: 0.08rem;
+    text-transform: uppercase;
+}}
+
+.panel-subtitle {{
+    color: rgba(227, 246, 255, 0.7);
+    margin-top: -0.8rem;
+    margin-bottom: 1.1rem;
+    font-size: 0.95rem;
+    letter-spacing: 0.05rem;
+}}
+
+.panel-body {{
+    position: relative;
+    z-index: 2;
+}}
+
+.analysis-bubble {{
+    margin-top: 1.1rem;
+    padding: 0.9rem 1.1rem;
+    border-radius: 14px;
+    background: rgba(255, 41, 109, 0.08);
+    border: 1px solid rgba(255, 41, 109, 0.45);
+    box-shadow: 0 0 18px rgba(255, 41, 109, 0.25);
+    font-weight: 600;
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    color: #ffdce6;
+}}
+
+.analysis-icon {{
+    font-size: 1.2rem;
+    margin-top: 0.2rem;
+}}
+
+.neon-subheader {{
+    font-family: 'Orbitron', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12rem;
+    color: var(--accent-color);
+    margin-top: 1.4rem;
+    margin-bottom: 0.6rem;
+    text-shadow: 0 0 12px rgba(0, 234, 255, 0.55);
+}}
+
+.stSlider > div {{
+    padding: 0.4rem 0.7rem;
+    background: rgba(0, 234, 255, 0.06);
+    border-radius: 14px;
+    border: 1px solid rgba(0, 234, 255, 0.18);
+}}
+
+.stSlider [data-baseweb="slider"] > div > div {{
+    background: linear-gradient(90deg, rgba(0, 234, 255, 0.75), rgba(255, 41, 109, 0.75));
+}}
+
+.stSelectbox label, .stMultiselect label {{
+    text-transform: uppercase;
+    font-family: 'Orbitron', sans-serif;
+    letter-spacing: 0.08rem;
+}}
+
+.stDataFrame {{
+    filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.45));
+}}
+
+.stDataFrame table {{
+    border-radius: 12px;
+    overflow: hidden;
+}}
+
+.stDataFrame [role="gridcell"], .stDataFrame [role="columnheader"] {{
+    color: #f1f5ff !important;
+    background-color: rgba(9, 14, 29, 0.85) !important;
+    border-color: rgba(0, 234, 255, 0.12) !important;
+}}
+
+.stDataFrame [role="columnheader"] {{
+    font-family: 'Orbitron', sans-serif;
+    letter-spacing: 0.05rem;
+}}
+
+@keyframes pulseGlow {{
+    0% {{ transform: rotate(0deg); opacity: 0.4; }}
+    50% {{ transform: rotate(180deg); opacity: 0.8; }}
+    100% {{ transform: rotate(360deg); opacity: 0.4; }}
+}}
+</style>"""
 
 # =========================
 # Configuración de la app
 # =========================
 st.set_page_config(page_title="SIAF Dashboard - Peru Compras", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
+
+
+@contextmanager
+def neon_panel(title: str, icon: str = "🕹️", subtitle: str | None = None):
+    st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
+    subtitle_html = f"<div class='panel-subtitle'>{subtitle}</div>" if subtitle else ""
+    st.markdown(
+        "<div class='panel-header'>"
+        f"<span class='panel-icon'>{icon}</span>"
+        f"<div><div class='panel-title'>{title}</div>{subtitle_html}</div></div>"
+        "<div class='panel-body'>",
+        unsafe_allow_html=True,
+    )
+    try:
+        yield
+    finally:
+        st.markdown("</div></div>", unsafe_allow_html=True)
+
+
+def neon_subheader(text: str, icon: str = "✨") -> None:
+    st.markdown(
+        f"<h3 class='neon-subheader'><span>{icon}</span> {text}</h3>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_analysis(text: str, icon: str = "🧠") -> None:
+    st.markdown(
+        f"<div class='analysis-bubble'><span class='analysis-icon'>{icon}</span><span>{text}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def style_arcade_chart(chart: alt.Chart) -> alt.Chart:
+    return (
+        chart.configure_view(
+            strokeOpacity=0,
+            fill="#0b1126",
+        )
+        .configure_axis(
+            labelColor="#e3f6ff",
+            titleColor="#78f1ff",
+            gridColor="rgba(120, 241, 255, 0.12)",
+            domainColor="rgba(120, 241, 255, 0.28)",
+        )
+        .configure_legend(
+            labelColor="#e3f6ff",
+            titleColor="#78f1ff",
+            orient="bottom",
+            direction="horizontal",
+            symbolType="stroke",
+            symbolSize=150,
+        )
+        .configure_title(
+            font="Orbitron",
+            color="#e3f6ff",
+            fontWeight="bold",
+        )
+    )
 
 header_col_logo, header_col_text = st.columns([1, 4])
 with header_col_logo:
@@ -1712,919 +1959,988 @@ proyeccion_wide = pd.DataFrame()
 ])
 
 with tab_resumen:
-    st.header("Resumen ejecutivo (totales)")
-    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
-    k1.metric("PIA", f"S/ {_tot_pia:,.2f}")
-    k2.metric("PIM", f"S/ {_tot_pim:,.2f}")
-    k3.metric("Certificado", f"S/ {_tot_cert:,.2f}")
-    k4.metric("Comprometido", f"S/ {_tot_comp:,.2f}")
-    k5.metric("Devengado (YTD)", f"S/ {_tot_dev:,.2f}")
-    k6.metric("No certificado", f"S/ {_no_certificado:,.2f}")
-    k7.metric("Avance", f"{_avance_global:.2f}%")
-    pendiente_por_devengar = max(_tot_pim - _tot_dev, 0.0)
-    cert_ratio = (_tot_cert / _tot_pim * 100.0) if _tot_pim else 0.0
-    st.markdown(
-        "**Análisis:** El avance global llega a "
-        f"{_avance_global:.2f}% del PIM, con S/ {pendiente_por_devengar:,.2f} aún por devengar. "
-        f"El certificado cubre el {cert_ratio:.2f}% del presupuesto, dejando S/ {_no_certificado:,.2f} sin certificar."
-    )
+    with neon_panel(
+        "Resumen ejecutivo",
+        icon="🛡️",
+        subtitle="Tablero maestro con la telemetría global del presupuesto",
+    ):
+        k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+        k1.metric("PIA", f"S/ {_tot_pia:,.2f}")
+        k2.metric("PIM", f"S/ {_tot_pim:,.2f}")
+        k3.metric("Certificado", f"S/ {_tot_cert:,.2f}")
+        k4.metric("Comprometido", f"S/ {_tot_comp:,.2f}")
+        k5.metric("Devengado (YTD)", f"S/ {_tot_dev:,.2f}")
+        k6.metric("No certificado", f"S/ {_no_certificado:,.2f}")
+        k7.metric("Avance", f"{_avance_global:.2f}%")
+        pendiente_por_devengar = max(_tot_pim - _tot_dev, 0.0)
+        cert_ratio = (_tot_cert / _tot_pim * 100.0) if _tot_pim else 0.0
+        render_analysis(
+            "El avance global llega a "
+            f"{_avance_global:.2f}% del PIM, con S/ {pendiente_por_devengar:,.2f} aún por devengar. "
+            f"El certificado cubre el {cert_ratio:.2f}% del presupuesto, dejando S/ {_no_certificado:,.2f} sin certificar.",
+            icon="🧭",
+        )
 
 with tab_consol:
-    st.header("Consolidado por clasificador")
-    if consolidado.empty:
-        st.info("No hay información consolidada para mostrar.")
-    else:
-        consol_display = consolidado.head(500).copy()
-        consol_display = standardize_financial_columns(consol_display)
-        consol_display = round_numeric_for_reporting(consol_display)
-        fmt_consol = build_style_formatters(consol_display)
-        consol_style = consol_display.style
-        if "AVANCE" in consol_display.columns:
-            consol_style = consol_style.applymap(
-                lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=["AVANCE"],
-            )
-        if fmt_consol:
-            consol_style = consol_style.format(fmt_consol)
-        st.dataframe(consol_style, use_container_width=True)
-        total_clasificadores = int(consolidado.shape[0])
-        if "devengado" in consolidado.columns and not consolidado["devengado"].empty:
-            dev_series = pd.to_numeric(consolidado["devengado"], errors="coerce").fillna(0.0)
-            top_idx = dev_series.idxmax()
-            top_row = consolidado.loc[top_idx]
-            label_fields = [
-                "clasificador_desc",
-                "clasificador_cod",
-                "generica",
-                "especifica_det",
-            ]
-            top_label = next(
-                (
-                    str(top_row.get(field)).strip()
-                    for field in label_fields
-                    if field in top_row and str(top_row.get(field)).strip()
-                ),
-                "el clasificador líder",
-            )
-            top_dev = float(dev_series.loc[top_idx])
-            avance_val = top_row.get("avance_%")
-            avance_text = (
-                f" con un avance de {float(avance_val):.2f}%"
-                if isinstance(avance_val, (int, float, np.floating)) and not np.isnan(avance_val)
-                else ""
-            )
-            st.markdown(
-                "**Análisis:** Se resumen "
-                f"{total_clasificadores} clasificadores; {top_label} concentra el mayor devengado "
-                f"con S/ {top_dev:,.2f}{avance_text}."
-            )
+    with neon_panel(
+        "Consolidado por clasificador",
+        icon="📊",
+        subtitle="Top clasificadores con visión arcade del devengado",
+    ):
+        if consolidado.empty:
+            st.info("No hay información consolidada para mostrar.")
         else:
-            st.markdown(
-                "**Análisis:** Se listan "
-                f"{total_clasificadores} clasificadores con montos presupuestales disponibles."
-            )
+            consol_display = consolidado.head(500).copy()
+            consol_display = standardize_financial_columns(consol_display)
+            consol_display = round_numeric_for_reporting(consol_display)
+            fmt_consol = build_style_formatters(consol_display)
+            consol_style = consol_display.style
+            if "AVANCE" in consol_display.columns:
+                consol_style = consol_style.applymap(
+                    lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                    if v < float(riesgo_umbral)
+                    else "",
+                    subset=["AVANCE"],
+                )
+            if fmt_consol:
+                consol_style = consol_style.format(fmt_consol)
+            st.dataframe(consol_style, use_container_width=True)
+            total_clasificadores = int(consolidado.shape[0])
+            if "devengado" in consolidado.columns and not consolidado["devengado"].empty:
+                dev_series = pd.to_numeric(consolidado["devengado"], errors="coerce").fillna(0.0)
+                top_idx = dev_series.idxmax()
+                top_row = consolidado.loc[top_idx]
+                label_fields = [
+                    "clasificador_desc",
+                    "clasificador_cod",
+                    "generica",
+                    "especifica_det",
+                ]
+                top_label = next(
+                    (
+                        str(top_row.get(field)).strip()
+                        for field in label_fields
+                        if field in top_row and str(top_row.get(field)).strip()
+                    ),
+                    "el clasificador líder",
+                )
+                top_dev = float(dev_series.loc[top_idx])
+                avance_val = top_row.get("avance_%")
+                avance_text = (
+                    f" con un avance de {float(avance_val):.2f}%"
+                    if isinstance(avance_val, (int, float, np.floating)) and not np.isnan(avance_val)
+                    else ""
+                )
+                render_analysis(
+                    f"Se resumen {total_clasificadores} clasificadores; {top_label} concentra el mayor devengado "
+                    f"con S/ {top_dev:,.2f}{avance_text}.",
+                    icon="💡",
+                )
+            else:
+                render_analysis(
+                    f"Se listan {total_clasificadores} clasificadores con montos presupuestales disponibles.",
+                    icon="🛰️",
+                )
 
 with tab_avance:
-    st.header("Avance mensual interactivo")
-    if avance_series.empty:
-        st.info("No hay información de devengado mensual para graficar.")
-    else:
-        avance_display = avance_series.copy()
-        vista_avance = st.radio(
-            "Selecciona la vista",
-            ("Gráfico", "Tabla"),
-            horizontal=True,
-            key="avance_view_mode",
-            help="Alterna entre la visualización gráfica y la tabla resumen del devengado mensual.",
-            label_visibility="collapsed",
-        )
-
-        if vista_avance == "Gráfico":
-            bar = (
-                alt.Chart(avance_display)
-                .mark_bar(color="#1f77b4")
-                .encode(
-                    x=alt.X("mes:O", title="Mes"),
-                    y=alt.Y("devengado:Q", title="Devengado", axis=alt.Axis(format="$,.2f")),
-                    tooltip=[
-                        alt.Tooltip("mes", title="Mes"),
-                        alt.Tooltip("devengado", title="Devengado", format="$,.2f"),
-                        alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
-                    ],
-                )
-            )
-            line = (
-                alt.Chart(avance_display)
-                .mark_line(color="#ff7f0e", point=True)
-                .encode(
-                    x=alt.X("mes:O", title="Mes"),
-                    y=alt.Y("%_acumulado:Q", title="% acumulado", axis=alt.Axis(format=".2f")),
-                    tooltip=[
-                        alt.Tooltip("mes", title="Mes"),
-                        alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
-                    ],
-                )
-            )
-            chart = alt.layer(bar, line).resolve_scale(y="independent").properties(width=520, height=260)
-            st.altair_chart(chart, use_container_width=False)
+    with neon_panel(
+        "Avance mensual interactivo",
+        icon="🚀",
+        subtitle="Comparte ritmo mensual y acumulado como si fuera un marcador de arcade",
+    ):
+        if avance_series.empty:
+            st.info("No hay información de devengado mensual para graficar.")
         else:
-            avance_table = round_numeric_for_reporting(avance_display)
-            fmt_avance = build_style_formatters(avance_table)
-            avance_style = avance_table.style
-            if "%_acumulado" in avance_table.columns:
-                avance_style = avance_style.applymap(
-                    lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                    subset=["%_acumulado"],
-                )
-            if fmt_avance:
-                avance_style = avance_style.format(fmt_avance)
-            st.dataframe(avance_style, use_container_width=True)
-        avance_calc = avance_display.copy()
-        if "devengado" in avance_calc.columns:
-            avance_calc["devengado"] = pd.to_numeric(avance_calc["devengado"], errors="coerce").fillna(0.0)
-            avance_calc = avance_calc.sort_values("mes")
-            avance_calc["acumulado"] = avance_calc["devengado"].cumsum()
-            last_row = avance_calc.iloc[-1]
-            peak_idx = avance_calc["devengado"].idxmax()
-            peak_row = avance_calc.loc[peak_idx]
-            last_month = int(last_row["mes"]) if not pd.isna(last_row["mes"]) else None
-            peak_month = int(peak_row["mes"]) if not pd.isna(peak_row["mes"]) else None
-            last_label = MONTH_NAME_LABELS.get(last_month, f"Mes {last_month:02d}") if last_month else "Último mes"
-            peak_label = MONTH_NAME_LABELS.get(peak_month, f"Mes {peak_month:02d}") if peak_month else "el mes con mayor ejecución"
-            acumulado = float(last_row.get("acumulado", 0.0))
-            avance_pct = float(last_row.get("%_acumulado", 0.0)) if "%_acumulado" in last_row else 0.0
-            peak_value = float(peak_row.get("devengado", 0.0))
-            st.markdown(
-                "**Análisis:** El devengado acumulado asciende a "
-                f"S/ {acumulado:,.2f} a {last_label} ({avance_pct:.2f}% del PIM). "
-                f"El mes más dinámico fue {peak_label} con S/ {peak_value:,.2f} devengados."
+            avance_display = avance_series.copy()
+            vista_avance = st.radio(
+                "Selecciona la vista",
+                ("Gráfico", "Tabla"),
+                horizontal=True,
+                key="avance_view_mode",
+                help="Alterna entre la visualización gráfica y la tabla resumen del devengado mensual.",
+                label_visibility="collapsed",
             )
+
+            if vista_avance == "Gráfico":
+                bar = (
+                    alt.Chart(avance_display)
+                    .mark_bar(color=ACCENT_COLOR, opacity=0.82)
+                    .encode(
+                        x=alt.X("mes:O", title="Mes"),
+                        y=alt.Y(
+                            "devengado:Q",
+                            title="Devengado (S/)",
+                            axis=alt.Axis(format="$,.2f"),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("mes", title="Mes"),
+                            alt.Tooltip("devengado", title="Devengado", format="$,.2f"),
+                            alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
+                        ],
+                    )
+                )
+                line = (
+                    alt.Chart(avance_display)
+                    .mark_line(color=PRIMARY_COLOR, point=alt.OverlayMarkDef(color="#ffe45c"), strokeWidth=3)
+                    .encode(
+                        x=alt.X("mes:O", title="Mes"),
+                        y=alt.Y(
+                            "%_acumulado:Q",
+                            title="% acumulado",
+                            axis=alt.Axis(format=".2f"),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("mes", title="Mes"),
+                            alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
+                        ],
+                    )
+                )
+                chart = (
+                    alt.layer(bar, line)
+                    .resolve_scale(y="independent")
+                    .properties(width=520, height=280)
+                    .interactive()
+                )
+                st.altair_chart(style_arcade_chart(chart), use_container_width=True)
+            else:
+                avance_table = round_numeric_for_reporting(avance_display)
+                fmt_avance = build_style_formatters(avance_table)
+                avance_style = avance_table.style
+                if "%_acumulado" in avance_table.columns:
+                    avance_style = avance_style.applymap(
+                        lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                        if v < float(riesgo_umbral)
+                        else "",
+                        subset=["%_acumulado"],
+                    )
+                if fmt_avance:
+                    avance_style = avance_style.format(fmt_avance)
+                st.dataframe(avance_style, use_container_width=True)
+            avance_calc = avance_display.copy()
+            if "devengado" in avance_calc.columns:
+                avance_calc["devengado"] = pd.to_numeric(avance_calc["devengado"], errors="coerce").fillna(0.0)
+                avance_calc = avance_calc.sort_values("mes")
+                avance_calc["acumulado"] = avance_calc["devengado"].cumsum()
+                last_row = avance_calc.iloc[-1]
+                peak_idx = avance_calc["devengado"].idxmax()
+                peak_row = avance_calc.loc[peak_idx]
+                last_month = int(last_row["mes"]) if not pd.isna(last_row["mes"]) else None
+                peak_month = int(peak_row["mes"]) if not pd.isna(peak_row["mes"]) else None
+                last_label = (
+                    MONTH_NAME_LABELS.get(last_month, f"Mes {last_month:02d}")
+                    if last_month
+                    else "Último mes"
+                )
+                peak_label = (
+                    MONTH_NAME_LABELS.get(peak_month, f"Mes {peak_month:02d}")
+                    if peak_month
+                    else "el mes con mayor ejecución"
+                )
+                acumulado = float(last_row.get("acumulado", 0.0))
+                avance_pct = float(last_row.get("%_acumulado", 0.0)) if "%_acumulado" in last_row else 0.0
+                peak_value = float(peak_row.get("devengado", 0.0))
+render_analysis(
+    "El devengado acumulado asciende a "
+    f"S/ {acumulado:,.2f} a {last_label} ({avance_pct:.2f}% del PIM). "
+    f"El mes más dinámico fue {peak_label} con S/ {peak_value:,.2f} devengados.",
+    icon="📈",
+)
+
 
 with tab_saldos:
-    st.header("Saldos programados vs. ejecución")
-    if saldos_monthly_long.empty or saldos_cumulative_long.empty:
-        st.info(
-            "No hay información suficiente de programación mensual y devengado por genérica para calcular los saldos."
-        )
-    else:
-        genericas_disponibles = sorted(saldos_monthly["generica"].unique().tolist())
-        seleccion_genericas = st.multiselect(
-            "Genéricas de gasto",
-            options=genericas_disponibles,
-            default=genericas_disponibles,
-            key="saldos_generica_filter",
-        )
-
-        if not seleccion_genericas:
-            st.warning("Selecciona al menos una genérica para visualizar la evolución de saldos.")
+    with neon_panel(
+        "Saldos programados vs. ejecución",
+        icon="🛰️",
+        subtitle="Controla los saldos como si fueran barras de energía por genérica",
+    ):
+        if saldos_monthly_long.empty or saldos_cumulative_long.empty:
+            st.info(
+                "No hay información suficiente de programación mensual y devengado por genérica para calcular los saldos."
+            )
         else:
-            month_label_order = [
-                MONTH_NAME_LABELS.get(i, f"Mes {i:02d}") for i in range(1, 13)
-            ]
-
-            monthly_filtered = saldos_monthly_long[
-                saldos_monthly_long["generica"].isin(seleccion_genericas)
-            ]
-            cumulative_filtered = saldos_cumulative_long[
-                saldos_cumulative_long["generica"].isin(seleccion_genericas)
-            ]
-
-            st.subheader("Evolución mensual de saldos")
-            monthly_chart = (
-                alt.Chart(monthly_filtered)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
-                    y=alt.Y("monto:Q", title="Monto (S/)", axis=alt.Axis(format="$,.2f")),
-                    color=alt.Color("generica:N", title="Genérica de gasto"),
-                    strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
-                    tooltip=[
-                        alt.Tooltip("Mes:N", title="Mes"),
-                        alt.Tooltip("generica:N", title="Genérica"),
-                        alt.Tooltip("concepto:N", title="Concepto"),
-                        alt.Tooltip("monto:Q", title="Monto", format="$,.2f"),
-                        alt.Tooltip("programado:Q", title="Programado", format="$,.2f"),
-                        alt.Tooltip("devengado:Q", title="Devengado", format="$,.2f"),
-                    ],
-                )
-                .properties(width=620, height=320)
+            genericas_disponibles = sorted(saldos_monthly["generica"].unique().tolist())
+            seleccion_genericas = st.multiselect(
+                "Genéricas de gasto",
+                options=genericas_disponibles,
+                default=genericas_disponibles,
+                key="saldos_generica_filter",
             )
-            st.altair_chart(monthly_chart, use_container_width=True)
 
-            st.subheader("Saldo acumulado anual")
-            cumulative_chart = (
-                alt.Chart(cumulative_filtered)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
-                    y=alt.Y(
-                        "monto:Q",
-                        title="Monto acumulado (S/)",
-                        axis=alt.Axis(format="$,.2f"),
-                    ),
-                    color=alt.Color("generica:N", title="Genérica de gasto"),
-                    strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
-                    tooltip=[
-                        alt.Tooltip("Mes:N", title="Mes"),
-                        alt.Tooltip("generica:N", title="Genérica"),
-                        alt.Tooltip("concepto:N", title="Concepto"),
-                        alt.Tooltip("monto:Q", title="Monto", format="$,.2f"),
-                    ],
+            if not seleccion_genericas:
+                st.warning("Selecciona al menos una genérica para visualizar la evolución de saldos.")
+            else:
+                month_label_order = [
+                    MONTH_NAME_LABELS.get(i, f"Mes {i:02d}") for i in range(1, 13)
+                ]
+
+                monthly_filtered = saldos_monthly_long[
+                    saldos_monthly_long["generica"].isin(seleccion_genericas)
+                ]
+                cumulative_filtered = saldos_cumulative_long[
+                    saldos_cumulative_long["generica"].isin(seleccion_genericas)
+                ]
+
+                neon_subheader("Evolución mensual de saldos", icon="📊")
+                monthly_chart = (
+                    alt.Chart(monthly_filtered)
+                    .mark_line(point=alt.OverlayMarkDef(size=70))
+                    .encode(
+                        x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
+                        y=alt.Y("monto:Q", title="Monto (S/)", axis=alt.Axis(format="$,.2f")),
+                        color=alt.Color(
+                            "generica:N",
+                            title="Genérica de gasto",
+                            scale=alt.Scale(range=ARCADE_COLOR_RANGE),
+                        ),
+                        strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
+                        tooltip=[
+                            alt.Tooltip("generica", title="Genérica"),
+                            alt.Tooltip("Mes", title="Mes"),
+                            alt.Tooltip("concepto", title="Concepto"),
+                            alt.Tooltip("monto", title="Monto", format="$,.2f"),
+                        ],
+                    )
+                    .properties(height=320)
                 )
-                .properties(width=620, height=320)
-            )
-            st.altair_chart(cumulative_chart, use_container_width=True)
-            saldos_subset = saldos_monthly[saldos_monthly["generica"].isin(seleccion_genericas)]
-            if not saldos_subset.empty:
-                last_month = int(saldos_subset["mes"].max())
-                latest_rows = saldos_subset[saldos_subset["mes"] == last_month]
-                saldo_mes_total = float(latest_rows["saldo_programado"].sum())
-                no_cert_total = float(latest_rows["no_certificado"].sum())
-                saldo_acumulado_total = float(
-                    saldos_subset.groupby("generica")["saldo_acumulado"].last().sum()
+                st.altair_chart(style_arcade_chart(monthly_chart), use_container_width=True)
+
+                neon_subheader("Saldo acumulado y no certificado", icon="🛸")
+                cumulative_chart = (
+                    alt.Chart(cumulative_filtered)
+                    .mark_area(opacity=0.6)
+                    .encode(
+                        x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
+                        y=alt.Y(
+                            "monto:Q",
+                            stack=False,
+                            title="Monto (S/)",
+                            axis=alt.Axis(format="$,.2f"),
+                        ),
+                        color=alt.Color(
+                            "concepto:N",
+                            title="Concepto",
+                            scale=alt.Scale(
+                                domain=["Saldo programado acumulado", "No certificado"],
+                                range=["#6f2cff", "#ff9d00"],
+                            ),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("generica", title="Genérica"),
+                            alt.Tooltip("Mes", title="Mes"),
+                            alt.Tooltip("concepto", title="Concepto"),
+                            alt.Tooltip("monto", title="Monto", format="$,.2f"),
+                        ],
+                    )
+                    .properties(height=320)
                 )
-                month_label = MONTH_NAME_LABELS.get(last_month, f"Mes {last_month:02d}")
-                st.markdown(
-                    "**Análisis:** En "
-                    f"{month_label} los saldos programados seleccionados ascienden a S/ {saldo_mes_total:,.2f}, "
-                    f"con un acumulado anual de S/ {saldo_acumulado_total:,.2f} y S/ {no_cert_total:,.2f} identificados como no certificados."
+                st.altair_chart(style_arcade_chart(cumulative_chart), use_container_width=True)
+
+                month_totals = (
+                    monthly_filtered.groupby(["Mes", "concepto"], dropna=False)["monto"].sum().reset_index()
                 )
+                if not month_totals.empty:
+                    hottest = month_totals.sort_values("monto", ascending=False).iloc[0]
+                    render_month = hottest["Mes"]
+                    render_concept = hottest["concepto"]
+                    render_value = float(hottest["monto"])
+                else:
+                    render_month = "Sin datos"
+                    render_concept = "Saldo"
+                    render_value = 0.0
+                acumulado_total = float(cumulative_filtered["monto"].sum()) if not cumulative_filtered.empty else 0.0
+                render_analysis(
+                    "En las genéricas seleccionadas, el saldo más desafiante se registró en "
+                    f"{render_month} ({render_concept}) con S/ {render_value:,.2f}. "
+                    f"Los montos acumulados suman S/ {acumulado_total:,.2f}, combinando programación pendiente y no certificado.",
+                    icon="📟",
+                )
+
 
 with tab_simulacion:
-    st.header("Simulación de devolución de saldos")
-    if simulation_detail_df.empty or simulation_overview_df.empty:
-        st.info(
-            "No hay información suficiente para simular devoluciones; verifica que existan datos de PIM, devengado y saldos por genérica."
-        )
-    else:
-        st.markdown(
-            "Selecciona automáticamente las combinaciones de devolución que reducirían el PIM sin afectar la proyección de ejecución, "
-            "apoyándose en el promedio de devengado mensual observado."
-        )
-
-        detail_display = simulation_detail_df.rename(
-            columns={
-                "generica": "Genérica",
-                "mto_pim": "PIM",
-                "devengado": "Devengado acumulado",
-                "promedio_mensual": "Devengado mensual promedio",
-                "proyeccion_total": "Devengado proyectado",
-                "avance_proyectado_%": "% avance proyectado",
-                "saldo_por_devolver": "Saldo por devolver",
-                "no_certificado": "No certificado",
-                "retorno_sugerido": "Devolución sugerida",
-            }
-        )
-        detail_display = round_numeric_for_reporting(detail_display)
-        fmt_detail = build_style_formatters(detail_display)
-        detail_style = detail_display.style
-        if fmt_detail:
-            detail_style = detail_style.format(fmt_detail)
-        st.dataframe(detail_style, use_container_width=True)
-
-        adjustable_rows = simulation_detail_df[
-            simulation_detail_df["saldo_por_devolver"] > 0
-        ].copy()
-        custom_returns: Dict[str, float] = {}
-        custom_detail_rows: List[Dict[str, float]] = []
-
-        total_pim = simulation_metrics.get("total_pim", 0.0)
-        projected_total = simulation_metrics.get("projected_total", 0.0)
-
-        if adjustable_rows.empty:
+    with neon_panel(
+        "Simulación de devolución de saldos",
+        icon="🧠",
+        subtitle="Escenarios arcade para optimizar devoluciones y sostener el avance anual",
+    ):
+        if simulation_detail_df.empty or simulation_overview_df.empty:
             st.info(
-                "No hay genéricas con saldo disponible para devolver manualmente."
+                "No hay información suficiente para simular devoluciones; verifica que existan datos de PIM, devengado y saldos por genérica."
             )
         else:
-            st.subheader("Panel de control de devoluciones")
             st.caption(
-                "Arrastra los deslizadores futuristas para decidir cuánto devolver en cada genérica. "
-                "El rango máximo se adapta al saldo disponible y el punto inicial sigue la recomendación inteligente."
+                "Selecciona automáticamente las combinaciones de devolución que reducen el PIM manteniendo la proyección de ejecución basada en el ritmo mensual."
             )
 
-            slider_columns = st.columns(min(3, len(adjustable_rows)))
-            for idx, row in enumerate(adjustable_rows.itertuples()):
-                gen_value = str(row.generica).strip() or "Genérica"
-                max_available = float(row.saldo_por_devolver)
+            detail_display = simulation_detail_df.rename(
+                columns={
+                    "generica": "Genérica",
+                    "mto_pim": "PIM",
+                    "devengado": "Devengado acumulado",
+                    "promedio_mensual": "Devengado mensual promedio",
+                    "proyeccion_total": "Devengado proyectado",
+                    "avance_proyectado_%": "% avance proyectado",
+                    "saldo_por_devolver": "Saldo por devolver",
+                    "no_certificado": "No certificado",
+                    "retorno_sugerido": "Devolución sugerida",
+                }
+            )
+            detail_display = round_numeric_for_reporting(detail_display)
+            fmt_detail = build_style_formatters(detail_display)
+            detail_style = detail_display.style
+            if fmt_detail:
+                detail_style = detail_style.format(fmt_detail)
+            neon_subheader("Matriz base de devoluciones", icon="🗺️")
+            st.dataframe(detail_style, use_container_width=True)
+
+            adjustable_rows = simulation_detail_df[
+                simulation_detail_df["saldo_por_devolver"] > 0
+            ].copy()
+            custom_returns: Dict[str, float] = {}
+            custom_detail_rows: List[Dict[str, float]] = []
+
+            total_pim = simulation_metrics.get("total_pim", 0.0)
+            projected_total = simulation_metrics.get("projected_total", 0.0)
+
+            if adjustable_rows.empty:
+                st.info(
+                    "No hay genéricas con saldo disponible para devolver manualmente."
+                )
+            else:
+                neon_subheader("Panel de control de devoluciones", icon="🎛️")
+                st.caption(
+                    "Arrastra los deslizadores neón para decidir cuánto devolver en cada genérica. El rango máximo se adapta al saldo disponible y parte de la sugerencia inteligente."
+                )
+
+                slider_columns = st.columns(min(3, len(adjustable_rows)))
+                for idx, row in enumerate(adjustable_rows.itertuples()):
+                    gen_value = str(row.generica).strip() or "Genérica"
+                    max_available = float(row.saldo_por_devolver)
+                    suggested = float(row.retorno_sugerido)
+                    if max_available <= 0:
+                        continue
+
+                    col = slider_columns[idx % len(slider_columns)]
+                    default = min(suggested, max_available)
+                    key_suffix = abs(hash(("sim", gen_value))) % 10_000_000
+                    slider_key = f"sim_slider_{key_suffix}"
+                    saved_value = float(st.session_state.get(slider_key, default))
+                    saved_value = float(np.clip(saved_value, 0.0, max_available))
+                    step = max(max_available / 40.0, 1.0)
+
+                    with col:
+                        st.markdown(f"**{gen_value}**")
+                        slider_val = st.slider(
+                            "Devolución personalizada",
+                            min_value=0.0,
+                            max_value=float(max_available),
+                            value=saved_value,
+                            step=float(step),
+                            format="S/ %0.0f",
+                            key=slider_key,
+                        )
+                        custom_returns[gen_value] = float(slider_val)
+                        st.progress(
+                            0.0 if max_available <= 0 else min(slider_val / max_available, 1.0)
+                        )
+                        st.caption(
+                            f"Sugerido: S/ {suggested:,.2f} · Disponible: S/ {max_available:,.2f}"
+                        )
+
+            overview_rows = simulation_overview_df.to_dict("records")
+            custom_return_total = float(sum(custom_returns.values())) if custom_returns else 0.0
+            custom_pim_final = max(total_pim - custom_return_total, 0.0)
+            if custom_pim_final > 0:
+                custom_projected = min(projected_total, custom_pim_final)
+                custom_pct = custom_projected / custom_pim_final * 100.0
+            else:
+                custom_projected = 0.0
+                custom_pct = 0.0
+
+            if custom_returns:
+                overview_rows.append(
+                    {
+                        "Escenario": "Devolución personalizada",
+                        "PIM final": custom_pim_final,
+                        "Devengado proyectado": custom_projected,
+                        "% avance fin de año": custom_pct,
+                    }
+                )
+
+            if overview_rows:
+                neon_subheader("Marcador holográfico", icon="💠")
+                scoreboard_cols = st.columns(len(overview_rows))
+                for idx, record in enumerate(overview_rows):
+                    avance = float(record.get("% avance fin de año", 0.0))
+                    pim_final = float(record.get("PIM final", 0.0))
+                    proyectado = float(record.get("Devengado proyectado", 0.0))
+                    delta = proyectado - projected_total if "projected_total" in locals() else proyectado
+                    with scoreboard_cols[idx]:
+                        st.metric(
+                            record.get("Escenario", f"Escenario {idx + 1}"),
+                            f"{avance:.2f}%",
+                            delta=f"Δ devengado: S/ {delta:,.0f}",
+                        )
+                        st.caption(
+                            f"PIM final: S/ {pim_final:,.0f} · Devengado proyectado: S/ {proyectado:,.0f}"
+                        )
+
+            for row in simulation_detail_df.itertuples():
                 suggested = float(row.retorno_sugerido)
-                if max_available <= 0:
-                    continue
+                manual_return = float(custom_returns.get(str(row.generica).strip(), 0.0))
+                pim_base = float(row.mto_pim)
+                pim_final = max(pim_base - manual_return, 0.0)
+                projected = min(float(row.proyeccion_total), pim_final)
+                avance_pct = projected / pim_final * 100.0 if pim_final else 0.0
+                custom_detail_rows.append(
+                    {
+                        "generica": row.generica,
+                        "pim_base": pim_base,
+                        "pim_final": pim_final,
+                        "devengado_proyectado": projected,
+                        "devolucion_sugerida": suggested,
+                        "devolucion_personalizada": manual_return,
+                        "%_fin_ano": avance_pct,
+                    }
+                )
 
-                col = slider_columns[idx % len(slider_columns)]
-                default = min(suggested, max_available)
-                key_suffix = abs(hash(("sim", gen_value))) % 10_000_000
-                slider_key = f"sim_slider_{key_suffix}"
-                saved_value = float(st.session_state.get(slider_key, default))
-                saved_value = float(np.clip(saved_value, 0.0, max_available))
-                step = max(max_available / 40.0, 1.0)
+            if custom_returns:
+                simulation_metrics.update(
+                    {
+                        "custom_return": custom_return_total,
+                        "custom_pct": custom_pct,
+                        "custom_pim": custom_pim_final,
+                        "custom_projected": custom_projected,
+                    }
+                )
 
-                with col:
-                    st.markdown(f"**{gen_value}**")
-                    slider_val = st.slider(
-                        "Devolución personalizada",
-                        min_value=0.0,
-                        max_value=float(max_available),
-                        value=saved_value,
-                        step=float(step),
-                        format="S/ %0.0f",
-                        key=slider_key,
+            neon_subheader("Tabla táctica de escenarios", icon="📋")
+            overview_df = pd.DataFrame(overview_rows)
+            overview_display = round_numeric_for_reporting(overview_df.copy())
+            fmt_overview = build_style_formatters(overview_display)
+            overview_style = overview_display.style
+            if fmt_overview:
+                overview_style = overview_style.format(fmt_overview)
+            st.dataframe(overview_style, use_container_width=True)
+
+            neon_subheader("Arena interactiva de escenarios", icon="🕹️")
+            st.caption(
+                "Explora cómo cambia el tablero al alternar cada indicador. Usa la leyenda para resaltar un escenario como si estuvieras en un panel de estrategia."
+            )
+            chart_rows = []
+            for record in overview_rows:
+                chart_rows.extend(
+                    [
+                        {
+                            "Escenario": record["Escenario"],
+                            "Indicador": "PIM final",
+                            "Monto": float(record.get("PIM final", 0.0)),
+                            "Tipo": "Monto",
+                        },
+                        {
+                            "Escenario": record["Escenario"],
+                            "Indicador": "Devengado proyectado",
+                            "Monto": float(record.get("Devengado proyectado", 0.0)),
+                            "Tipo": "Monto",
+                        },
+                        {
+                            "Escenario": record["Escenario"],
+                            "Indicador": "% avance fin de año",
+                            "Monto": float(record.get("% avance fin de año", 0.0)),
+                            "Tipo": "Porcentaje",
+                        },
+                    ]
+                )
+            scenarios_chart_df = pd.DataFrame(chart_rows)
+            if not scenarios_chart_df.empty:
+                metric_options = (
+                    scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Monto", "Indicador"].unique().tolist()
+                )
+                percent_options = (
+                    scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Porcentaje", "Indicador"].unique().tolist()
+                )
+
+                if metric_options:
+                    selected_metric = st.selectbox(
+                        "Indicador a comparar",
+                        metric_options,
+                        key="simulaciones_metric_selector",
                     )
-                    custom_returns[gen_value] = float(slider_val)
-                    st.progress(
-                        0.0 if max_available <= 0 else min(slider_val / max_available, 1.0)
+                    metric_chart_source = scenarios_chart_df[
+                        (scenarios_chart_df["Tipo"] == "Monto")
+                        & (scenarios_chart_df["Indicador"] == selected_metric)
+                    ]
+                    legend_focus = alt.selection_point(fields=["Escenario"], bind="legend")
+                    metric_chart = (
+                        alt.Chart(metric_chart_source)
+                        .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
+                        .encode(
+                            x=alt.X("Escenario:N", title="Escenario"),
+                            y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format="$,.2f")),
+                            color=alt.Color(
+                                "Escenario:N",
+                                title="Escenario",
+                                scale=alt.Scale(range=["#00eaff", "#ff296d", "#ffe45c", "#19f5aa"]),
+                            ),
+                            opacity=alt.condition(legend_focus, alt.value(1.0), alt.value(0.35)),
+                            tooltip=[
+                                alt.Tooltip("Escenario:N", title="Escenario"),
+                                alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format="$,.2f"),
+                            ],
+                        )
+                        .add_params(legend_focus)
+                        .properties(height=300)
+                        .interactive()
                     )
-                    st.caption(
-                        f"Sugerido: S/ {suggested:,.2f} · Disponible: S/ {max_available:,.2f}"
+                    st.altair_chart(style_arcade_chart(metric_chart), use_container_width=True)
+
+                if percent_options:
+                    percent_chart = (
+                        alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Porcentaje"])
+                        .mark_line(point=alt.OverlayMarkDef(size=100, filled=True, color="#ffe45c"), strokeWidth=4)
+                        .encode(
+                            x=alt.X("Escenario:N", title="Escenario"),
+                            y=alt.Y("Monto:Q", title="% avance fin de año", axis=alt.Axis(format=".2f")),
+                            color=alt.Color(
+                                "Escenario:N",
+                                title="Escenario",
+                                scale=alt.Scale(range=["#ffe45c", "#ff296d", "#00eaff", "#b388ff"]),
+                            ),
+                            tooltip=[
+                                alt.Tooltip("Escenario:N", title="Escenario"),
+                                alt.Tooltip("Monto:Q", title="Avance (%)", format=".2f"),
+                            ],
+                        )
+                        .properties(height=260)
+                        .interactive()
+                    )
+                    st.altair_chart(style_arcade_chart(percent_chart), use_container_width=True)
+
+            if custom_returns:
+                chart_return_rows = []
+                for row in adjustable_rows.itertuples():
+                    chart_return_rows.append(
+                        {
+                            "Genérica": row.generica,
+                            "Tipo": "Sugerido",
+                            "Monto": float(row.retorno_sugerido),
+                        }
+                    )
+                    chart_return_rows.append(
+                        {
+                            "Genérica": row.generica,
+                            "Tipo": "Personalizado",
+                            "Monto": float(custom_returns.get(str(row.generica).strip(), 0.0)),
+                        }
+                    )
+                returns_chart_df = pd.DataFrame(chart_return_rows)
+                if not returns_chart_df.empty:
+                    hover_selection = alt.selection_single(fields=["Genérica"], nearest=True, on="mouseover")
+                    returns_chart = (
+                        alt.Chart(returns_chart_df)
+                        .add_selection(hover_selection)
+                        .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
+                        .encode(
+                            x=alt.X("Genérica:N", sort="-y", title="Genérica"),
+                            y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format="$,.2f")),
+                            color=alt.Color(
+                                "Tipo:N",
+                                title="Escenario",
+                                scale=alt.Scale(range=["#00eaff", "#ff296d"]),
+                            ),
+                            opacity=alt.condition(hover_selection, alt.value(1.0), alt.value(0.45)),
+                            tooltip=[
+                                alt.Tooltip("Genérica:N", title="Genérica"),
+                                alt.Tooltip("Tipo:N", title="Escenario"),
+                                alt.Tooltip("Monto:Q", title="Monto", format="$,.2f"),
+                            ],
+                        )
+                        .properties(height=320)
+                        .interactive()
+                    )
+                    st.altair_chart(style_arcade_chart(returns_chart), use_container_width=True)
+
+            if not simulation_per_gen_df.empty:
+                neon_subheader("Impacto por genérica evaluada", icon="🛰️")
+                per_gen_display = simulation_per_gen_df.rename(
+                    columns={
+                        "generica": "Genérica",
+                        "devolucion": "Devolución evaluada",
+                        "pim_final": "PIM final",
+                        "%_fin_ano": "% avance fin de año",
+                        "delta_pct": "Variación vs base (p.p.)",
+                    }
+                )
+                per_gen_display = round_numeric_for_reporting(per_gen_display)
+                fmt_per_gen = build_style_formatters(per_gen_display)
+                per_gen_style = per_gen_display.style
+                if fmt_per_gen:
+                    per_gen_style = per_gen_style.format(fmt_per_gen)
+                st.dataframe(per_gen_style, use_container_width=True)
+
+            if custom_returns and custom_detail_rows:
+                custom_per_gen_df = pd.DataFrame(custom_detail_rows)
+                custom_per_gen_df = custom_per_gen_df[
+                    custom_per_gen_df["devolucion_personalizada"] > 0
+                ]
+                if not custom_per_gen_df.empty:
+                    neon_subheader("Impacto personalizado por genérica", icon="🌌")
+                    custom_display = custom_per_gen_df.rename(
+                        columns={
+                            "generica": "Genérica",
+                            "pim_base": "PIM base",
+                            "pim_final": "PIM final",
+                            "devengado_proyectado": "Devengado proyectado",
+                            "devolucion_sugerida": "Devolución sugerida",
+                            "devolucion_personalizada": "Devolución personalizada",
+                            "%_fin_ano": "% avance fin de año",
+                        }
+                    )
+                    custom_display = round_numeric_for_reporting(custom_display)
+                    fmt_custom = build_style_formatters(custom_display)
+                    custom_style = custom_display.style
+                    if fmt_custom:
+                        custom_style = custom_style.format(fmt_custom)
+                    st.dataframe(custom_style, use_container_width=True)
+
+            baseline_pct = simulation_metrics.get("baseline_pct", 0.0)
+            intelligent_pct = simulation_metrics.get("intelligent_pct", baseline_pct)
+            intelligent_return = simulation_metrics.get("intelligent_return", 0.0)
+            projected_total = simulation_metrics.get("projected_total", 0.0)
+            total_pim = simulation_metrics.get("total_pim", 0.0)
+            custom_pct = simulation_metrics.get("custom_pct")
+            custom_return_total = simulation_metrics.get("custom_return", 0.0)
+            custom_projected = simulation_metrics.get("custom_projected")
+            month_label = MONTH_NAME_LABELS.get(int(current_month), f"Mes {int(current_month):02d}")
+
+            top_candidates = simulation_detail_df[simulation_detail_df["retorno_sugerido"] > 0]
+            top_candidates = top_candidates.sort_values("retorno_sugerido", ascending=False).head(3)
+            if intelligent_return > 0 and not top_candidates.empty:
+                bullets = "; ".join(
+                    f"{row.generica}: S/ {row.retorno_sugerido:,.2f}" for row in top_candidates.itertuples()
+                )
+                analysis_text = (
+                    f"Con el ritmo promedio observado hasta {month_label} se proyecta un avance de {baseline_pct:.2f}% sobre un PIM de S/ {total_pim:,.2f}. "
+                    f"Devolver inteligentemente S/ {intelligent_return:,.2f} concentrados en {bullets} elevaría la proyección a {intelligent_pct:.2f}% "
+                    f"manteniendo un devengado estimado de S/ {projected_total:,.2f}."
+                )
+            elif intelligent_return > 0:
+                analysis_text = (
+                    f"El algoritmo recomienda devolver S/ {intelligent_return:,.2f} para elevar el avance esperado de {baseline_pct:.2f}% a {intelligent_pct:.2f}% sin reducir el devengado proyectado."
+                )
+            else:
+                analysis_text = (
+                    f"Con el ritmo actual se espera ejecutar S/ {projected_total:,.2f} ({baseline_pct:.2f}% del PIM); no se proyectan saldos sobrantes que ameriten devolución."
+                )
+
+            if (
+                custom_returns
+                and custom_pct is not None
+                and custom_projected is not None
+                and custom_return_total > 0
+            ):
+                analysis_text += (
+                    f" Al aplicar la devolución personalizada de S/ {custom_return_total:,.2f} el avance estimado alcanzaría {custom_pct:.2f}% con un devengado proyectado de S/ {custom_projected:,.2f}."
+                )
+
+            if not simulation_per_gen_df.empty:
+                best_delta = simulation_per_gen_df.sort_values("delta_pct", ascending=False).iloc[0]
+                if best_delta["delta_pct"] > 0:
+                    analysis_text += (
+                        f" Además, devolver únicamente en {best_delta['generica']} implicaría un avance estimado de {best_delta['%_fin_ano']:.2f}% (+{best_delta['delta_pct']:.2f} p.p. frente al escenario base)."
                     )
 
-        overview_rows = simulation_overview_df.to_dict("records")
-        custom_return_total = float(sum(custom_returns.values())) if custom_returns else 0.0
-        custom_pim_final = max(total_pim - custom_return_total, 0.0)
-        if custom_pim_final > 0:
-            custom_projected = min(projected_total, custom_pim_final)
-            custom_pct = custom_projected / custom_pim_final * 100.0
+            render_analysis(analysis_text, icon="🧠")
+
+with tab_gestion:
+    with neon_panel(
+        "Ritmo requerido por proceso",
+        icon="⚙️",
+        subtitle="Usa la consola de potencia para alinear cada proceso con el objetivo anual",
+    ):
+        if "mto_pim" not in df_view.columns:
+            st.info("No hay datos de PIM para calcular el ritmo requerido.")
         else:
-            custom_projected = 0.0
-            custom_pct = 0.0
-
-        if custom_returns:
-            overview_rows.append(
-                {
-                    "Escenario": "Devolución personalizada",
-                    "PIM final": custom_pim_final,
-                    "Devengado proyectado": custom_projected,
-                    "% avance fin de año": custom_pct,
-                }
-            )
-
-        if overview_rows:
-            st.subheader("Marcador holográfico")
-            scoreboard_cols = st.columns(len(overview_rows))
-            for idx, record in enumerate(overview_rows):
-                avance = float(record.get("% avance fin de año", 0.0))
-                pim_final = float(record.get("PIM final", 0.0))
-                proyectado = float(record.get("Devengado proyectado", 0.0))
-                delta = proyectado - projected_total if "projected_total" in locals() else proyectado
-                with scoreboard_cols[idx]:
-                    st.metric(
-                        record.get("Escenario", f"Escenario {idx + 1}"),
-                        f"{avance:.2f}%",
-                        delta=f"Δ devengado: S/ {delta:,.0f}",
-                    )
-                    st.caption(
-                        f"PIM final: S/ {pim_final:,.0f} · Devengado proyectado: S/ {proyectado:,.0f}"
-                    )
-
-        for row in simulation_detail_df.itertuples():
-            suggested = float(row.retorno_sugerido)
-            manual_return = float(custom_returns.get(str(row.generica).strip(), 0.0))
-            pim_base = float(row.mto_pim)
-            pim_final = max(pim_base - manual_return, 0.0)
-            projected = min(float(row.proyeccion_total), pim_final)
-            avance_pct = projected / pim_final * 100.0 if pim_final else 0.0
-            custom_detail_rows.append(
-                {
-                    "generica": row.generica,
-                    "pim_base": pim_base,
-                    "pim_final": pim_final,
-                    "devengado_proyectado": projected,
-                    "devolucion_sugerida": suggested,
-                    "devolucion_personalizada": manual_return,
-                    "%_fin_ano": avance_pct,
-                }
-            )
-
-        if custom_returns:
-            simulation_metrics.update(
-                {
-                    "custom_return": custom_return_total,
-                    "custom_pct": custom_pct,
-                    "custom_pim": custom_pim_final,
-                    "custom_projected": custom_projected,
-                }
-            )
-
-        st.subheader("Tabla táctica de escenarios")
-        overview_df = pd.DataFrame(overview_rows)
-        overview_display = round_numeric_for_reporting(overview_df.copy())
-        fmt_overview = build_style_formatters(overview_display)
-        overview_style = overview_display.style
-        if fmt_overview:
-            overview_style = overview_style.format(fmt_overview)
-        st.dataframe(overview_style, use_container_width=True)
-
-        st.subheader("Arena interactiva de escenarios")
-        st.caption(
-            "Explora cómo cambia el tablero al alternar cada indicador. Usa la leyenda para resaltar un escenario y observa"
-            " cómo responden las métricas como si estuvieras en un panel de estrategia."
-        )
-        chart_rows = []
-        for record in overview_rows:
-            chart_rows.extend(
-                [
-                    {
-                        "Escenario": record["Escenario"],
-                        "Indicador": "PIM final",
-                        "Monto": float(record.get("PIM final", 0.0)),
-                        "Tipo": "Monto",
-                    },
-                    {
-                        "Escenario": record["Escenario"],
-                        "Indicador": "Devengado proyectado",
-                        "Monto": float(record.get("Devengado proyectado", 0.0)),
-                        "Tipo": "Monto",
-                    },
-                    {
-                        "Escenario": record["Escenario"],
-                        "Indicador": "% avance fin de año",
-                        "Monto": float(record.get("% avance fin de año", 0.0)),
-                        "Tipo": "Porcentaje",
-                    },
-                ]
-            )
-        scenarios_chart_df = pd.DataFrame(chart_rows)
-        if not scenarios_chart_df.empty:
-            metric_options = (
-                scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Monto", "Indicador"].unique().tolist()
-            )
-            percent_options = (
-                scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Porcentaje", "Indicador"].unique().tolist()
-            )
-
-            if metric_options:
-                selected_metric = st.selectbox(
-                    "Indicador a comparar",
-                    metric_options,
-                    key="simulaciones_metric_selector",
+            remaining_months = max(12 - current_month, 1)
+            pim_total = df_view["mto_pim"].sum()
+            processes = []
+            for col, label in [
+                ("mto_certificado", "Certificar"),
+                ("mto_compro_anual", "Comprometer"),
+                ("devengado", "Devengar"),
+            ]:
+                total = df_view.get(col, pd.Series(dtype=float)).sum()
+                actual_avg = total / max(current_month, 1)
+                needed = max(pim_total - total, 0)
+                required_avg = needed / remaining_months
+                processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
+            ritmo_raw = pd.DataFrame(processes)
+            if ritmo_raw.empty:
+                st.info("No hay información suficiente para calcular el ritmo requerido.")
+            else:
+                st.caption(
+                    "Activa la consola interactiva para impulsar cada proceso. Ajusta los deslizadores y observa cómo responde el tablero en tiempo real."
                 )
-                metric_chart_source = scenarios_chart_df[
-                    (scenarios_chart_df["Tipo"] == "Monto")
-                    & (scenarios_chart_df["Indicador"] == selected_metric)
-                ]
-                legend_focus = alt.selection_point(fields=["Escenario"], bind="legend")
-                metric_chart = (
-                    alt.Chart(metric_chart_source)
+                impulse_values: List[float] = []
+                control_columns = st.columns(len(ritmo_raw))
+                for idx, row in ritmo_raw.iterrows():
+                    proceso = str(row["Proceso"])
+                    actual = float(row["Actual"])
+                    necesario = float(row["Necesario"])
+                    gap = max(necesario - actual, 0.0)
+                    max_slider = float(max(necesario * 1.5, actual * 1.5, gap * 2.0, 1.0))
+                    key_suffix = abs(hash(("ritmo", proceso))) % 10_000_000
+                    slider_key = f"ritmo_impulso_{key_suffix}"
+                    saved_value = float(st.session_state.get(slider_key, gap))
+                    saved_value = float(np.clip(saved_value, 0.0, max_slider))
+                    step = max(max_slider / 40.0, 1.0)
+
+                    col = control_columns[idx % len(control_columns)]
+                    with col:
+                        st.markdown(f"**{proceso}**")
+                        st.metric("Ritmo actual", f"S/ {actual:,.2f}", delta=f"Meta: S/ {necesario:,.2f}")
+                        progress_ratio = 1.0 if necesario <= 0 else min(actual / necesario, 1.0)
+                        st.progress(progress_ratio)
+                        slider_val = st.slider(
+                            "Impulso mensual",
+                            min_value=0.0,
+                            max_value=max_slider,
+                            value=saved_value,
+                            step=float(step),
+                            format="S/ %0.0f",
+                            key=slider_key,
+                        )
+                        impulse_values.append(float(slider_val))
+                        st.caption(f"Brecha actual: S/ {gap:,.2f}")
+
+                if len(impulse_values) < len(ritmo_raw):
+                    impulse_values.extend([0.0] * (len(ritmo_raw) - len(impulse_values)))
+
+                ritmo_dynamic = ritmo_raw.copy()
+                ritmo_dynamic["Impulso manual (S/)"] = impulse_values
+                ritmo_dynamic["Ritmo ajustado"] = ritmo_dynamic["Actual"] + ritmo_dynamic["Impulso manual (S/)"]
+                ritmo_dynamic["Brecha restante (S/)"] = (
+                    ritmo_dynamic["Necesario"] - ritmo_dynamic["Ritmo ajustado"]
+                )
+
+                ritmo_display = round_numeric_for_reporting(
+                    ritmo_dynamic.rename(
+                        columns={
+                            "Actual": "Ritmo actual (S/)",
+                            "Necesario": "Ritmo necesario (S/)",
+                        }
+                    )
+                )
+                fmt_ritmo = build_style_formatters(ritmo_display)
+                ritmo_style = ritmo_display.style
+                if fmt_ritmo:
+                    ritmo_style = ritmo_style.format(fmt_ritmo)
+                st.dataframe(ritmo_style, use_container_width=True)
+
+                neon_subheader("Tablero visual neón", icon="🧾")
+                ritmo_melt = ritmo_dynamic.melt(
+                    "Proceso",
+                    value_vars=["Actual", "Necesario", "Ritmo ajustado"],
+                    var_name="Escenario",
+                    value_name="Monto",
+                )
+                ritmo_chart = (
+                    alt.Chart(ritmo_melt)
                     .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                     .encode(
-                        x=alt.X("Escenario:N", title="Escenario"),
-                        y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format="$,.2f")),
+                        x=alt.X("Proceso:N", title="Proceso"),
+                        y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format="$,.2f")),
                         color=alt.Color(
                             "Escenario:N",
                             title="Escenario",
-                            scale=alt.Scale(range=["#3a86ff", "#8338ec", "#ff006e", "#fb5607"]),
+                            scale=alt.Scale(range=["#00eaff", "#ff296d", "#ffe45c"]),
                         ),
-                        opacity=alt.condition(legend_focus, alt.value(1.0), alt.value(0.35)),
                         tooltip=[
+                            alt.Tooltip("Proceso:N", title="Proceso"),
                             alt.Tooltip("Escenario:N", title="Escenario"),
-                            alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format="$,.2f"),
-                        ],
-                    )
-                    .add_params(legend_focus)
-                    .properties(height=300)
-                    .interactive()
-                )
-                st.altair_chart(metric_chart, use_container_width=True)
-
-            if percent_options:
-                percent_chart = (
-                    alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Porcentaje"])
-                    .mark_line(point=alt.OverlayMarkDef(size=100, filled=True, color="#ffbe0b"), strokeWidth=4)
-                    .encode(
-                        x=alt.X("Escenario:N", title="Escenario"),
-                        y=alt.Y("Monto:Q", title="% avance fin de año", axis=alt.Axis(format=".2f")),
-                        color=alt.Color(
-                            "Escenario:N",
-                            title="Escenario",
-                            scale=alt.Scale(range=["#ffbe0b", "#fb5607", "#ff006e", "#8338ec"]),
-                        ),
-                        tooltip=[
-                            alt.Tooltip("Escenario:N", title="Escenario"),
-                            alt.Tooltip("Monto:Q", title="Avance (%)", format=".2f"),
-                        ],
-                    )
-                    .properties(height=260)
-                    .interactive()
-                    .configure_view(strokeOpacity=0)
-                )
-                st.altair_chart(percent_chart, use_container_width=True)
-
-        if custom_returns:
-            chart_return_rows = []
-            for row in adjustable_rows.itertuples():
-                chart_return_rows.append(
-                    {
-                        "Genérica": row.generica,
-                        "Tipo": "Sugerido",
-                        "Monto": float(row.retorno_sugerido),
-                    }
-                )
-                chart_return_rows.append(
-                    {
-                        "Genérica": row.generica,
-                        "Tipo": "Personalizado",
-                        "Monto": float(custom_returns.get(str(row.generica).strip(), 0.0)),
-                    }
-                )
-            returns_chart_df = pd.DataFrame(chart_return_rows)
-            if not returns_chart_df.empty:
-                hover_selection = alt.selection_single(fields=["Genérica"], nearest=True, on="mouseover")
-                returns_chart = (
-                    alt.Chart(returns_chart_df)
-                    .add_selection(hover_selection)
-                    .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
-                    .encode(
-                        x=alt.X("Genérica:N", sort="-y", title="Genérica"),
-                        y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format="$,.2f")),
-                        color=alt.Color(
-                            "Tipo:N",
-                            title="Escenario",
-                            scale=alt.Scale(range=["#4cc9f0", "#f72585"]),
-                        ),
-                        opacity=alt.condition(hover_selection, alt.value(1.0), alt.value(0.45)),
-                        tooltip=[
-                            alt.Tooltip("Genérica:N", title="Genérica"),
-                            alt.Tooltip("Tipo:N", title="Escenario"),
                             alt.Tooltip("Monto:Q", title="Monto", format="$,.2f"),
                         ],
                     )
                     .properties(height=320)
                     .interactive()
-                    .configure_view(strokeOpacity=0)
                 )
-                st.altair_chart(returns_chart, use_container_width=True)
+                st.altair_chart(style_arcade_chart(ritmo_chart), use_container_width=True)
 
-        if not simulation_per_gen_df.empty:
-            st.subheader("Impacto por genérica evaluada")
-            per_gen_display = simulation_per_gen_df.rename(
-                columns={
-                    "generica": "Genérica",
-                    "devolucion": "Devolución evaluada",
-                    "pim_final": "PIM final",
-                    "%_fin_ano": "% avance fin de año",
-                    "delta_pct": "Variación vs base (p.p.)",
-                }
-            )
-            per_gen_display = round_numeric_for_reporting(per_gen_display)
-            fmt_per_gen = build_style_formatters(per_gen_display)
-            per_gen_style = per_gen_display.style
-            if fmt_per_gen:
-                per_gen_style = per_gen_style.format(fmt_per_gen)
-            st.dataframe(per_gen_style, use_container_width=True)
-
-        if custom_returns and custom_detail_rows:
-            custom_per_gen_df = pd.DataFrame(custom_detail_rows)
-            custom_per_gen_df = custom_per_gen_df[
-                custom_per_gen_df["devolucion_personalizada"] > 0
-            ]
-            if not custom_per_gen_df.empty:
-                st.subheader("Impacto personalizado por genérica")
-                custom_display = custom_per_gen_df.rename(
-                    columns={
-                        "generica": "Genérica",
-                        "pim_base": "PIM base",
-                        "pim_final": "PIM final",
-                        "devengado_proyectado": "Devengado proyectado",
-                        "devolucion_sugerida": "Devolución sugerida",
-                        "devolucion_personalizada": "Devolución personalizada",
-                        "%_fin_ano": "% avance fin de año",
-                    }
-                )
-                custom_display = round_numeric_for_reporting(custom_display)
-                fmt_custom = build_style_formatters(custom_display)
-                custom_style = custom_display.style
-                if fmt_custom:
-                    custom_style = custom_style.format(fmt_custom)
-                st.dataframe(custom_style, use_container_width=True)
-
-        baseline_pct = simulation_metrics.get("baseline_pct", 0.0)
-        intelligent_pct = simulation_metrics.get("intelligent_pct", baseline_pct)
-        intelligent_return = simulation_metrics.get("intelligent_return", 0.0)
-        projected_total = simulation_metrics.get("projected_total", 0.0)
-        total_pim = simulation_metrics.get("total_pim", 0.0)
-        custom_pct = simulation_metrics.get("custom_pct")
-        custom_return_total = simulation_metrics.get("custom_return", 0.0)
-        custom_projected = simulation_metrics.get("custom_projected")
-        month_label = MONTH_NAME_LABELS.get(int(current_month), f"Mes {int(current_month):02d}")
-
-        top_candidates = simulation_detail_df[simulation_detail_df["retorno_sugerido"] > 0]
-        top_candidates = top_candidates.sort_values("retorno_sugerido", ascending=False).head(3)
-        if intelligent_return > 0 and not top_candidates.empty:
-            bullets = "; ".join(
-                f"{row.generica}: S/ {row.retorno_sugerido:,.2f}" for row in top_candidates.itertuples()
-            )
-            analysis_text = (
-                "**Análisis:** Con el ritmo promedio observado hasta "
-                f"{month_label} se proyecta alcanzar un avance de {baseline_pct:.2f}% sobre un PIM de S/ {total_pim:,.2f}. "
-                f"Devolver inteligentemente S/ {intelligent_return:,.2f} concentrados en {bullets} elevaría la proyección a {intelligent_pct:.2f}% "
-                f"manteniendo un devengado estimado de S/ {projected_total:,.2f}."
-            )
-        elif intelligent_return > 0:
-            analysis_text = (
-                "**Análisis:** El algoritmo recomienda devolver S/ "
-                f"{intelligent_return:,.2f} para elevar el avance esperado de {baseline_pct:.2f}% a {intelligent_pct:.2f}% sin reducir la proyección de devengado."
-            )
-        else:
-            analysis_text = (
-                "**Análisis:** Con el ritmo actual se espera ejecutar S/ "
-                f"{projected_total:,.2f} ({baseline_pct:.2f}% del PIM), por lo que no se proyectan saldos sobrantes que ameriten devolución."
-            )
-
-        if (
-            custom_returns
-            and custom_pct is not None
-            and custom_projected is not None
-            and custom_return_total > 0
-        ):
-            analysis_text += (
-                " Al aplicar la devolución personalizada de S/ "
-                f"{custom_return_total:,.2f} el avance estimado alcanzaría {custom_pct:.2f}% con un devengado proyectado de S/ "
-                f"{custom_projected:,.2f}."
-            )
-
-        if not simulation_per_gen_df.empty:
-            best_delta = simulation_per_gen_df.sort_values("delta_pct", ascending=False).iloc[0]
-            if best_delta["delta_pct"] > 0:
-                analysis_text += (
-                    " Además, devolver únicamente en "
-                    f"{best_delta['generica']} implicaría un avance estimado de {best_delta['%_fin_ano']:.2f}% ("
-                    f"+{best_delta['delta_pct']:.2f} p.p. frente al escenario base)."
-                )
-
-        st.markdown(analysis_text)
-
-with tab_gestion:
-    st.header("Ritmo requerido por proceso")
-    if "mto_pim" not in df_view.columns:
-        st.info("No hay datos de PIM para calcular el ritmo requerido.")
-    else:
-        remaining_months = max(12 - current_month, 1)
-        pim_total = df_view["mto_pim"].sum()
-        processes = []
-        for col, label in [
-            ("mto_certificado", "Certificar"),
-            ("mto_compro_anual", "Comprometer"),
-            ("devengado", "Devengar"),
-        ]:
-            total = df_view.get(col, pd.Series(dtype=float)).sum()
-            actual_avg = total / max(current_month, 1)
-            needed = max(pim_total - total, 0)
-            required_avg = needed / remaining_months
-            processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
-        ritmo_raw = pd.DataFrame(processes)
-        if ritmo_raw.empty:
-            st.info("No hay información suficiente para calcular el ritmo requerido.")
-        else:
-            st.caption(
-                "Activa la consola interactiva para impulsar cada proceso. Las barras muestran cuánto te falta para alcanzar el ritmo ideal y los deslizadores aplican un turbo mensual."
-            )
-            impulse_values: List[float] = []
-            control_columns = st.columns(len(ritmo_raw))
-            for idx, row in ritmo_raw.iterrows():
-                proceso = str(row["Proceso"])
-                actual = float(row["Actual"])
-                necesario = float(row["Necesario"])
-                gap = max(necesario - actual, 0.0)
-                max_slider = float(max(necesario * 1.5, actual * 1.5, gap * 2.0, 1.0))
-                key_suffix = abs(hash(("ritmo", proceso))) % 10_000_000
-                slider_key = f"ritmo_impulso_{key_suffix}"
-                saved_value = float(st.session_state.get(slider_key, gap))
-                saved_value = float(np.clip(saved_value, 0.0, max_slider))
-                step = max(max_slider / 40.0, 1.0)
-
-                col = control_columns[idx % len(control_columns)]
-                with col:
-                    st.markdown(f"**{proceso}**")
-                    st.metric("Ritmo actual", f"S/ {actual:,.2f}", delta=f"Meta: S/ {necesario:,.2f}")
-                    progress_ratio = 1.0 if necesario <= 0 else min(actual / necesario, 1.0)
-                    st.progress(progress_ratio)
-                    slider_val = st.slider(
-                        "Impulso mensual",
-                        min_value=0.0,
-                        max_value=max_slider,
-                        value=saved_value,
-                        step=float(step),
-                        format="S/ %0.0f",
-                        key=slider_key,
+                brecha_chart_df = ritmo_dynamic.copy()
+                brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha restante (S/)"]
+                brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha positiva"].clip(lower=0.0)
+                if brecha_chart_df["Brecha positiva"].sum() > 0:
+                    brecha_chart = (
+                        alt.Chart(brecha_chart_df)
+                        .mark_area(line={"color": "#ff296d", "size": 3})
+                        .encode(
+                            x=alt.X("Proceso:N", title="Proceso"),
+                            y=alt.Y("Brecha positiva:Q", title="Brecha pendiente (S/)", axis=alt.Axis(format="$,.2f")),
+                            color=alt.value("#ff296d"),
+                            tooltip=[
+                                alt.Tooltip("Proceso:N", title="Proceso"),
+                                alt.Tooltip("Brecha positiva:Q", title="Brecha", format="$,.2f"),
+                            ],
+                        )
+                        .properties(height=220)
+                        .interactive()
                     )
-                    impulse_values.append(float(slider_val))
-                    st.caption(f"Brecha actual: S/ {gap:,.2f}")
+                    st.altair_chart(style_arcade_chart(brecha_chart), use_container_width=True)
 
-            if len(impulse_values) < len(ritmo_raw):
-                impulse_values.extend([0.0] * (len(ritmo_raw) - len(impulse_values)))
+                if not ritmo_dynamic.empty:
+                    brechas = ritmo_dynamic["Brecha restante (S/)"]
+                    brechas_clipped = brechas.clip(lower=0.0)
+                    total_brecha = float(brechas_clipped.sum())
+                    if total_brecha <= 1e-6:
+                        render_analysis(
+                            "Con el impulso definido cada proceso alcanza el ritmo necesario; el programa se mantiene al día con el PIM proyectado.",
+                            icon="✅",
+                        )
+                    else:
+                        peor_idx = brechas_clipped.idxmax()
+                        proceso_objetivo = ritmo_dynamic.loc[peor_idx, "Proceso"]
+                        brecha = float(brechas_clipped.loc[peor_idx])
+                        requerido_total = float(ritmo_dynamic["Necesario"].sum())
+                        render_analysis(
+                            "Para completar el PIM se requiere ejecutar en promedio S/ "
+                            f"{requerido_total:,.2f} mensuales. Tras el impulso propuesto aún falta potenciar {proceso_objetivo} "
+                            f"en S/ {brecha:,.2f} mensuales.",
+                            icon="⚠️",
+                        )
 
-            ritmo_dynamic = ritmo_raw.copy()
-            ritmo_dynamic["Impulso manual (S/)"] = impulse_values
-            ritmo_dynamic["Ritmo ajustado"] = ritmo_dynamic["Actual"] + ritmo_dynamic["Impulso manual (S/)"]
-            ritmo_dynamic["Brecha restante (S/)"] = (
-                ritmo_dynamic["Necesario"] - ritmo_dynamic["Ritmo ajustado"]
-            )
-            ritmo_dynamic["Brecha restante (S/)"] = ritmo_dynamic["Brecha restante (S/)"]
-
-            ritmo_display = round_numeric_for_reporting(
-                ritmo_dynamic.rename(
-                    columns={
-                        "Actual": "Ritmo actual (S/)",
-                        "Necesario": "Ritmo necesario (S/)",
-                    }
+    with neon_panel(
+        "Top áreas con menor avance",
+        icon="🏁",
+        subtitle="Ranking dinámico de las áreas rezagadas con indicadores críticos",
+    ):
+        if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
+            agg_cols = ["mto_pim", "devengado", "devengado_mes", "programado_mes"]
+            if "mto_certificado" in df_view.columns:
+                agg_cols.insert(1, "mto_certificado")
+            agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
+            agg_sec = agg_sec[agg_sec["mto_pim"] > 0].copy()
+            if agg_sec.empty:
+                st.info("No hay áreas con PIM positivo para calcular el rendimiento.")
+            else:
+                agg_sec["avance_acum_%"] = np.where(
+                    agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0
                 )
-            )
-            fmt_ritmo = build_style_formatters(ritmo_display)
-            ritmo_style = ritmo_display.style
-            if fmt_ritmo:
-                ritmo_style = ritmo_style.format(fmt_ritmo)
-            st.dataframe(ritmo_style, use_container_width=True)
+                agg_sec["avance_mes_%"] = np.where(
+                    agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0,
+                )
+                agg_sec["avance_programado_%"] = np.where(
+                    agg_sec["programado_mes"] > 0,
+                    agg_sec["devengado_mes"] / agg_sec["programado_mes"] * 100.0,
+                    0.0,
+                )
+                agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
+                agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
 
-            st.markdown("### Tablero visual neón")
-            ritmo_melt = ritmo_dynamic.melt(
-                "Proceso",
-                value_vars=["Actual", "Necesario", "Ritmo ajustado"],
-                var_name="Escenario",
-                value_name="Monto",
-            )
-            ritmo_chart = (
-                alt.Chart(ritmo_melt)
-                .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
-                .encode(
-                    x=alt.X("Proceso:N", title="Proceso"),
-                    y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format="$,.2f")),
-                    color=alt.Color(
-                        "Escenario:N",
-                        title="Escenario",
-                        scale=alt.Scale(range=["#00bbf9", "#f72585", "#fee440"]),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("Proceso:N", title="Proceso"),
-                        alt.Tooltip("Escenario:N", title="Escenario"),
-                        alt.Tooltip("Monto:Q", title="Monto", format="$,.2f"),
+                max_top = max(int(agg_sec.shape[0]), 1)
+                top_default = min(5, max_top)
+                slider_key = "leaderboard_top_n"
+                slider_value = st.session_state.get(slider_key, top_default)
+                if slider_value < 1 or slider_value > max_top:
+                    slider_value = min(max(slider_value, 1), max_top)
+                    st.session_state[slider_key] = slider_value
+
+                top_n = st.slider(
+                    "Número de áreas a mostrar",
+                    min_value=1,
+                    max_value=max_top,
+                    value=slider_value,
+                    key=slider_key,
+                )
+
+                leaderboard_df = (
+                    agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
+                    .head(top_n)
+                    .copy()
+                )
+                display_cols = ["rank_acum", "rank_mes", "sec_func", "mto_pim"]
+                if "mto_certificado" in agg_sec.columns:
+                    display_cols.append("mto_certificado")
+                display_cols.extend([
+                    "devengado",
+                    "avance_acum_%",
+                    "devengado_mes",
+                    "programado_mes",
+                    "avance_mes_%",
+                    "avance_programado_%",
+                ])
+                leaderboard_df = leaderboard_df[display_cols]
+
+                leaderboard_display = leaderboard_df.copy()
+                leaderboard_display = standardize_financial_columns(leaderboard_display)
+                leaderboard_display = round_numeric_for_reporting(leaderboard_display)
+                fmt_leader = build_style_formatters(leaderboard_display)
+                leader_style = leaderboard_display.style.applymap(
+                    lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                    if v < float(riesgo_umbral)
+                    else "",
+                    subset=[
+                        c
+                        for c in ["AVANCE", "AVANCE MES", "AVANCE MES (PIM)"]
+                        if c in leaderboard_display.columns
                     ],
                 )
-                .properties(height=320)
-                .configure_view(strokeOpacity=0)
-                .interactive()
-            )
-            st.altair_chart(ritmo_chart, use_container_width=True)
-
-            brecha_chart_df = ritmo_dynamic.copy()
-            brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha restante (S/)"]
-            brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha positiva"].clip(lower=0.0)
-            if brecha_chart_df["Brecha positiva"].sum() > 0:
-                brecha_chart = (
-                    alt.Chart(brecha_chart_df)
-                    .mark_area(line={"color": "#ff006e", "size": 3})
-                    .encode(
-                        x=alt.X("Proceso:N", title="Proceso"),
-                        y=alt.Y("Brecha positiva:Q", title="Brecha pendiente (S/)", axis=alt.Axis(format="$,.2f")),
-                        color=alt.value("#ff006e"),
-                        tooltip=[
-                            alt.Tooltip("Proceso:N", title="Proceso"),
-                            alt.Tooltip("Brecha positiva:Q", title="Brecha", format="$,.2f"),
-                        ],
+                if fmt_leader:
+                    leader_style = leader_style.format(fmt_leader)
+                st.dataframe(leader_style, use_container_width=True)
+                if not leaderboard_df.empty:
+                    worst_row = leaderboard_df.iloc[0]
+                    sec_label = str(worst_row.get("sec_func", "El primer sec_func")).strip()
+                    avance_acum = float(worst_row.get("avance_acum_%", 0.0))
+                    avance_mes = float(worst_row.get("avance_mes_%", 0.0))
+                    programado_mes = float(worst_row.get("programado_mes", 0.0))
+                    devengado_mes = float(worst_row.get("devengado_mes", 0.0))
+                    render_analysis(
+                        f"El área {sec_label} lidera la zona crítica con un avance acumulado de {avance_acum:.2f}% y un avance mensual de {avance_mes:.2f}%. "
+                        f"En el mes ejecutó S/ {devengado_mes:,.2f} frente a un programado de S/ {programado_mes:,.2f}.",
+                        icon="🚨",
                     )
-                    .properties(height=220)
-                    .interactive()
-                )
-                st.altair_chart(brecha_chart, use_container_width=True)
-
-            if not ritmo_dynamic.empty:
-                brechas = ritmo_dynamic["Brecha restante (S/)"]
-                brechas_clipped = brechas.clip(lower=0.0)
-                total_brecha = float(brechas_clipped.sum())
-                if total_brecha <= 1e-6:
-                    st.success(
-                        "**Análisis:** Con el impulso definido cada proceso alcanza el ritmo necesario; el programa se mantendría al día con el PIM proyectado."
-                    )
-                else:
-                    peor_idx = brechas_clipped.idxmax()
-                    proceso_objetivo = ritmo_dynamic.loc[peor_idx, "Proceso"]
-                    brecha = float(brechas_clipped.loc[peor_idx])
-                    requerido_total = float(ritmo_dynamic["Necesario"].sum())
-                    st.markdown(
-                        "**Análisis:** Para completar el PIM se requiere ejecutar en promedio S/ "
-                        f"{requerido_total:,.2f} mensuales. Tras el impulso propuesto aún falta potenciar {proceso_objetivo} "
-                        f"en S/ {brecha:,.2f} mensuales."
-                    )
-
-    st.header("Top áreas con menor avance")
-    if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
-        agg_cols = ["mto_pim", "devengado", "devengado_mes", "programado_mes"]
-        if "mto_certificado" in df_view.columns:
-            agg_cols.insert(1, "mto_certificado")
-        agg_sec = df_view.groupby("sec_func", dropna=False)[agg_cols].sum().reset_index()
-        agg_sec = agg_sec[agg_sec["mto_pim"] > 0].copy()
-        if agg_sec.empty:
-            st.info("No hay áreas con PIM positivo para calcular el rendimiento.")
         else:
-            agg_sec["avance_acum_%"] = np.where(agg_sec["mto_pim"] > 0, agg_sec["devengado"] / agg_sec["mto_pim"] * 100.0, 0.0)
-            agg_sec["avance_mes_%"] = np.where(
-                agg_sec["mto_pim"] > 0, agg_sec["devengado_mes"] / agg_sec["mto_pim"] * 100.0, 0.0,
-            )
-            agg_sec["avance_programado_%"] = np.where(
-                agg_sec["programado_mes"] > 0,
-                agg_sec["devengado_mes"] / agg_sec["programado_mes"] * 100.0,
-                0.0,
-            )
-            agg_sec["rank_acum"] = agg_sec["avance_acum_%"].rank(method="dense", ascending=True).astype(int)
-            agg_sec["rank_mes"] = agg_sec["avance_mes_%"].rank(method="dense", ascending=True).astype(int)
-
-            max_top = max(int(agg_sec.shape[0]), 1)
-            top_default = min(5, max_top)
-            slider_key = "leaderboard_top_n"
-            slider_value = st.session_state.get(slider_key, top_default)
-            if slider_value < 1 or slider_value > max_top:
-                slider_value = min(max(slider_value, 1), max_top)
-                st.session_state[slider_key] = slider_value
-
-            top_n = st.slider(
-                "Número de áreas a mostrar",
-                min_value=1,
-                max_value=max_top,
-                value=slider_value,
-                key=slider_key,
-            )
-
-            leaderboard_df = (
-                agg_sec.sort_values(["avance_acum_%", "avance_mes_%"], ascending=[True, True])
-                .head(top_n)
-                .copy()
-            )
-            display_cols = ["rank_acum", "rank_mes", "sec_func", "mto_pim"]
-            if "mto_certificado" in agg_sec.columns:
-                display_cols.append("mto_certificado")
-            display_cols.extend([
-                "devengado",
-                "avance_acum_%",
-                "devengado_mes",
-                "programado_mes",
-                "avance_mes_%",
-                "avance_programado_%",
-            ])
-            leaderboard_df = leaderboard_df[display_cols]
-
-            leaderboard_display = leaderboard_df.copy()
-            leaderboard_display = standardize_financial_columns(leaderboard_display)
-            leaderboard_display = round_numeric_for_reporting(leaderboard_display)
-            fmt_leader = build_style_formatters(leaderboard_display)
-            highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
-            leader_style = leaderboard_display.style.applymap(
-                highlight,
-                subset=[
-                    c
-                    for c in ["AVANCE", "AVANCE MES", "AVANCE MES (PIM)"]
-                    if c in leaderboard_display.columns
-                ],
-            )
-            if fmt_leader:
-                leader_style = leader_style.format(fmt_leader)
-            st.dataframe(leader_style, use_container_width=True)
-            if not leaderboard_df.empty:
-                worst_row = leaderboard_df.iloc[0]
-                sec_label = str(worst_row.get("sec_func", "El primer sec_func")).strip()
-                avance_acum = float(worst_row.get("avance_acum_%", 0.0))
-                avance_mes = float(worst_row.get("avance_mes_%", 0.0))
-                st.markdown(
-                    "**Análisis:** El área "
-                    f"{sec_label} registra el menor avance acumulado ({avance_acum:.2f}%) y "
-                    f"solo {avance_mes:.2f}% en el mes, por lo que requiere seguimiento prioritario."
-                )
-    else:
-        st.info("Se requieren las columnas sec_func y mto_pim para construir el ranking.")
+            st.info("No hay información de sec_func con PIM positivo para generar el ranking.")
 
 with tab_reporte:
-    st.header("Reporte SIAF por área, genérica y específica detalle")
-    reporte_siaf_pivot_source = pd.DataFrame()
-    if not all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
-        st.info("Para el reporte SIAF se requieren las columnas sec_func, generica y especifica_det.")
-    else:
-        siaf_agg_cols = [
-            c
-            for c in [
-                "mto_pia",
-                "mto_pim",
-                "mto_certificado",
-                "mto_compro_anual",
-                "devengado_mes",
-                "programado_mes",
-                "devengado",
-                "no_certificado",
-            ]
-            if c in df_view.columns
-        ]
-
-        if not siaf_agg_cols:
-            st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
+    with neon_panel(
+        "Reporte SIAF por área, genérica y específica detalle",
+        icon="📚",
+        subtitle="Explora la jerarquía de clasificadores con el brillo de una interfaz arcade",
+    ):
+        reporte_siaf_pivot_source = pd.DataFrame()
+        if not all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
+            st.info("Para el reporte SIAF se requieren las columnas sec_func, generica y especifica_det.")
         else:
-            base_group = ["sec_func", "generica", "especifica_det"]
-            agg_map = {col: "sum" for col in siaf_agg_cols}
-            if "clasificador_cod" in df_view.columns:
-                agg_map["clasificador_cod"] = "first"
-            if "especifica_det_desc" in df_view.columns:
-                agg_map["especifica_det_desc"] = "first"
+            siaf_agg_cols = [
+                c
+                for c in [
+                    "mto_pia",
+                    "mto_pim",
+                    "mto_certificado",
+                    "mto_compro_anual",
+                    "devengado_mes",
+                    "programado_mes",
+                    "devengado",
+                    "no_certificado",
+                ]
+                if c in df_view.columns
+            ]
 
-            reporte_base = (
-                df_view.groupby(base_group, dropna=False)
-                .agg(agg_map)
-                .reset_index()
-            )
+            if not siaf_agg_cols:
+                st.info("No se encontraron columnas monetarias para generar el reporte SIAF por área.")
+            else:
+                base_group = ["sec_func", "generica", "especifica_det"]
+                agg_map = {col: "sum" for col in siaf_agg_cols}
+                if "clasificador_cod" in df_view.columns:
+                    agg_map["clasificador_cod"] = "first"
+                if "especifica_det_desc" in df_view.columns:
+                    agg_map["especifica_det_desc"] = "first"
+
+                reporte_base = (
+                    df_view.groupby(base_group, dropna=False)
+                    .agg(agg_map)
+                    .reset_index()
+                )
 
             if "clasificador_cod" in reporte_base.columns:
                 clasificador_cod = reporte_base["clasificador_cod"].fillna("").astype(str).str.strip()
@@ -2855,7 +3171,9 @@ with tab_reporte:
             ]
             if highlight_cols:
                 reporte_style = reporte_style.applymap(
-                    lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
+                    lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                    if v < float(riesgo_umbral)
+                    else "",
                     subset=highlight_cols,
                 )
             if fmt_reporte:
@@ -2866,55 +3184,61 @@ with tab_reporte:
             tot_dev = float(reporte_base.get("devengado", pd.Series(dtype=float)).sum()) if "devengado" in reporte_base else 0.0
             tot_cert = float(reporte_base.get("mto_certificado", pd.Series(dtype=float)).sum()) if "mto_certificado" in reporte_base else 0.0
             avance_total = (tot_dev / tot_pim * 100.0) if tot_pim else 0.0
-            st.markdown(
-                "**Análisis:** El reporte detalla "
+            render_analysis(
+                "El reporte detalla "
                 f"{total_detalles} combinaciones de sec_func y genérica; en conjunto acumulan S/ {tot_dev:,.2f} devengados "
-                f"sobre un PIM de S/ {tot_pim:,.2f} (avance {avance_total:.2f}%), con S/ {tot_cert:,.2f} certificados."
+                f"sobre un PIM de S/ {tot_pim:,.2f} (avance {avance_total:.2f}%), con S/ {tot_cert:,.2f} certificados.",
+                icon="🧾",
             )
 
 with tab_descarga:
-    st.header("Descarga de reportes")
-    if not XLSXWRITER_AVAILABLE:
-        st.warning(
-            "No se encontró la librería `xlsxwriter`. El Excel se generará sin tablas ni gráficos embebidos."
-        )
-    excel_buffer = None
-    excel_engine = None
-    try:
-        excel_buffer, excel_engine = to_excel_download(
-            resumen=round_numeric_for_reporting(standardize_financial_columns(pivot.copy())),
-            avance=round_numeric_for_reporting(avance_series.copy()),
-            proyeccion=proyeccion_wide,
-            ritmo=round_numeric_for_reporting(ritmo_df.copy()),
-            leaderboard=round_numeric_for_reporting(standardize_financial_columns(leaderboard_df.copy())),
-            reporte_siaf=round_numeric_for_reporting(standardize_financial_columns(reporte_siaf_df.copy())),
-            reporte_siaf_pivot_source=reporte_siaf_pivot_source.copy(),
-        )
-    except ModuleNotFoundError as exc:
-        missing = getattr(exc, "name", "xlsxwriter/openpyxl")
-        st.error(
-            "No se pudo generar el archivo de Excel porque faltan dependencias instaladas: "
-            f"{missing}. Solicita al administrador que agregue el paquete correspondiente."
-        )
-    except Exception as exc:
-        st.error(f"No se pudo generar el archivo de Excel: {exc}")
-    else:
-        if excel_engine == "openpyxl" and XLSXWRITER_AVAILABLE:
-            st.info(
-                "`xlsxwriter` no se pudo inicializar, se utilizó `openpyxl` como alternativa. "
-                "Instala `xlsxwriter` para recuperar tablas y gráficos embebidos."
+    with neon_panel(
+        "Descarga de reportes",
+        icon="⬇️",
+        subtitle="Exporta el tablero completo con el mismo brillo que la experiencia interactiva",
+    ):
+        if not XLSXWRITER_AVAILABLE:
+            st.warning(
+                "No se encontró la librería `xlsxwriter`. El Excel se generará sin tablas ni gráficos embebidos."
             )
+        excel_buffer = None
+        excel_engine = None
+        try:
+            excel_buffer, excel_engine = to_excel_download(
+                resumen=round_numeric_for_reporting(standardize_financial_columns(pivot.copy())),
+                avance=round_numeric_for_reporting(avance_series.copy()),
+                proyeccion=proyeccion_wide,
+                ritmo=round_numeric_for_reporting(ritmo_df.copy()),
+                leaderboard=round_numeric_for_reporting(standardize_financial_columns(leaderboard_df.copy())),
+                reporte_siaf=round_numeric_for_reporting(standardize_financial_columns(reporte_siaf_df.copy())),
+                reporte_siaf_pivot_source=reporte_siaf_pivot_source.copy(),
+            )
+        except ModuleNotFoundError as exc:
+            missing = getattr(exc, "name", "xlsxwriter/openpyxl")
+            st.error(
+                "No se pudo generar el archivo de Excel porque faltan dependencias instaladas: "
+                f"{missing}. Solicita al administrador que agregue el paquete correspondiente."
+            )
+        except Exception as exc:
+            st.error(f"No se pudo generar el archivo de Excel: {exc}")
+        else:
+            if excel_engine == "openpyxl" and XLSXWRITER_AVAILABLE:
+                st.info(
+                    "`xlsxwriter` no se pudo inicializar, se utilizó `openpyxl` como alternativa. "
+                    "Instala `xlsxwriter` para recuperar tablas y gráficos embebidos."
+                )
 
-    if excel_buffer is not None:
-        st.download_button(
-            "Descargar Excel (Resumen + Avance)",
-            data=excel_buffer,
-            file_name="siaf_resumen_avance.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        if excel_engine:
-            st.markdown(
-                "**Análisis:** La descarga incluye todas las tablas mostradas en los apartados; "
-                f"se generó utilizando el motor de Excel `{excel_engine}`."
+        if excel_buffer is not None:
+            st.download_button(
+                "Descargar Excel (Resumen + Avance)",
+                data=excel_buffer,
+                file_name="siaf_resumen_avance.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+            if excel_engine:
+                render_analysis(
+                    "La descarga incluye todas las tablas mostradas en los apartados; "
+                    f"se generó utilizando el motor de Excel `{excel_engine}`.",
+                    icon="💾",
+                )
 
