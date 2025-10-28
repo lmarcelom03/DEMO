@@ -12,6 +12,16 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+alt.renderers.set_embed_options(
+    actions=False,
+    formatLocale={
+        "decimal": ".",
+        "thousands": ",",
+        "grouping": [3],
+        "currency": ["S/. ", ""],
+    },
+)
+
 EXCEL_SOURCE_DIR = Path(__file__).parent / "data" / "siaf"
 EXCEL_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +54,9 @@ except ModuleNotFoundError:
     OPENPYXL_AVAILABLE = False
 else:
     OPENPYXL_AVAILABLE = True
+
+EXCEL_CURRENCY_FORMAT = '"S/." #,##0.00'
+EXCEL_PERCENT_FORMAT = "0.00%"
 
 LOGO_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAIJklEQVR4nO3cO4uUVxjA8We8bLISIiRxC1Mu2AleChEE11L8ALZi6WewtrK1URsr/QZWgo2VjSBWYiw0"
@@ -374,7 +387,7 @@ def standardize_financial_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _format_amount(value):
-    return "" if pd.isna(value) else f"{value:,.2f}"
+    return "" if pd.isna(value) else f"S/. {value:,.2f}"
 
 
 def _format_percent(value):
@@ -1063,8 +1076,8 @@ def to_excel_download(
         percent_format = None
         if use_xlsxwriter and workbook is not None:
             header_format = workbook.add_format({"bold": True, "bg_color": "#c62828", "font_color": "#ffffff"})
-            currency_format = workbook.add_format({"num_format": "#,##0.00"})
-            percent_format = workbook.add_format({"num_format": "0.00%"})
+            currency_format = workbook.add_format({"num_format": EXCEL_CURRENCY_FORMAT})
+            percent_format = workbook.add_format({"num_format": EXCEL_PERCENT_FORMAT})
 
         def _sanitize_table_name(name: str) -> str:
             clean = re.sub(r"[^0-9A-Za-z_]", "", name)[:20]
@@ -1146,15 +1159,15 @@ def to_excel_download(
             pivot_table_config = {
                 "rows": ["sec_func", "Generica", "clasificador_cod-concepto"],
                 "values": [
-                    {"field": "PIM", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "COMPROMETIDO", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "DEVENGADO", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "AVANCE", "function": "average", "num_format": "0.00%"},
-                    {"field": "DEVENGADO MES", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "PROGRAMADO MES", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "AVANCE MES", "function": "average", "num_format": "0.00%"},
-                    {"field": "NO CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "PIM", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
+                    {"field": "CERTIFICADO", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
+                    {"field": "COMPROMETIDO", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
+                    {"field": "DEVENGADO", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
+                    {"field": "AVANCE", "function": "average", "num_format": EXCEL_PERCENT_FORMAT},
+                    {"field": "DEVENGADO MES", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
+                    {"field": "PROGRAMADO MES", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
+                    {"field": "AVANCE MES", "function": "average", "num_format": EXCEL_PERCENT_FORMAT},
+                    {"field": "NO CERTIFICADO", "function": "sum", "num_format": EXCEL_CURRENCY_FORMAT},
                 ],
             }
 
@@ -1792,10 +1805,10 @@ with tab_avance:
                 .mark_bar(color="#1f77b4")
                 .encode(
                     x=alt.X("mes:O", title="Mes"),
-                    y=alt.Y("devengado:Q", title="Devengado", axis=alt.Axis(format=",.2f")),
+                    y=alt.Y("devengado:Q", title="Devengado", axis=alt.Axis(format="$,.2f")),
                     tooltip=[
                         alt.Tooltip("mes", title="Mes"),
-                        alt.Tooltip("devengado", title="Devengado", format=",.2f"),
+                        alt.Tooltip("devengado", title="Devengado", format="$,.2f"),
                         alt.Tooltip("%_acumulado", title="% acumulado", format=".2f"),
                     ],
                 )
@@ -1882,16 +1895,16 @@ with tab_saldos:
                 .mark_line(point=True)
                 .encode(
                     x=alt.X("Mes:N", sort=month_label_order, title="Mes"),
-                    y=alt.Y("monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
+                    y=alt.Y("monto:Q", title="Monto (S/)", axis=alt.Axis(format="$,.2f")),
                     color=alt.Color("generica:N", title="Genérica de gasto"),
                     strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
                     tooltip=[
                         alt.Tooltip("Mes:N", title="Mes"),
                         alt.Tooltip("generica:N", title="Genérica"),
                         alt.Tooltip("concepto:N", title="Concepto"),
-                        alt.Tooltip("monto:Q", title="Monto", format=",.2f"),
-                        alt.Tooltip("programado:Q", title="Programado", format=",.2f"),
-                        alt.Tooltip("devengado:Q", title="Devengado", format=",.2f"),
+                        alt.Tooltip("monto:Q", title="Monto", format="$,.2f"),
+                        alt.Tooltip("programado:Q", title="Programado", format="$,.2f"),
+                        alt.Tooltip("devengado:Q", title="Devengado", format="$,.2f"),
                     ],
                 )
                 .properties(width=620, height=320)
@@ -1907,7 +1920,7 @@ with tab_saldos:
                     y=alt.Y(
                         "monto:Q",
                         title="Monto acumulado (S/)",
-                        axis=alt.Axis(format=",.2f"),
+                        axis=alt.Axis(format="$,.2f"),
                     ),
                     color=alt.Color("generica:N", title="Genérica de gasto"),
                     strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
@@ -1915,7 +1928,7 @@ with tab_saldos:
                         alt.Tooltip("Mes:N", title="Mes"),
                         alt.Tooltip("generica:N", title="Genérica"),
                         alt.Tooltip("concepto:N", title="Concepto"),
-                        alt.Tooltip("monto:Q", title="Monto", format=",.2f"),
+                        alt.Tooltip("monto:Q", title="Monto", format="$,.2f"),
                     ],
                 )
                 .properties(width=620, height=320)
@@ -2154,7 +2167,7 @@ with tab_simulacion:
                     .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                     .encode(
                         x=alt.X("Escenario:N", title="Escenario"),
-                        y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format=",.2f")),
+                        y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format="$,.2f")),
                         color=alt.Color(
                             "Escenario:N",
                             title="Escenario",
@@ -2163,7 +2176,7 @@ with tab_simulacion:
                         opacity=alt.condition(legend_focus, alt.value(1.0), alt.value(0.35)),
                         tooltip=[
                             alt.Tooltip("Escenario:N", title="Escenario"),
-                            alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format=",.2f"),
+                            alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format="$,.2f"),
                         ],
                     )
                     .add_params(legend_focus)
@@ -2221,7 +2234,7 @@ with tab_simulacion:
                     .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                     .encode(
                         x=alt.X("Genérica:N", sort="-y", title="Genérica"),
-                        y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
+                        y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format="$,.2f")),
                         color=alt.Color(
                             "Tipo:N",
                             title="Escenario",
@@ -2231,7 +2244,7 @@ with tab_simulacion:
                         tooltip=[
                             alt.Tooltip("Genérica:N", title="Genérica"),
                             alt.Tooltip("Tipo:N", title="Escenario"),
-                            alt.Tooltip("Monto:Q", title="Monto", format=",.2f"),
+                            alt.Tooltip("Monto:Q", title="Monto", format="$,.2f"),
                         ],
                     )
                     .properties(height=320)
@@ -2433,7 +2446,7 @@ with tab_gestion:
                 .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
                 .encode(
                     x=alt.X("Proceso:N", title="Proceso"),
-                    y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format=",.2f")),
+                    y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format="$,.2f")),
                     color=alt.Color(
                         "Escenario:N",
                         title="Escenario",
@@ -2442,7 +2455,7 @@ with tab_gestion:
                     tooltip=[
                         alt.Tooltip("Proceso:N", title="Proceso"),
                         alt.Tooltip("Escenario:N", title="Escenario"),
-                        alt.Tooltip("Monto:Q", title="Monto", format=",.2f"),
+                        alt.Tooltip("Monto:Q", title="Monto", format="$,.2f"),
                     ],
                 )
                 .properties(height=320)
@@ -2460,11 +2473,11 @@ with tab_gestion:
                     .mark_area(line={"color": "#ff006e", "size": 3})
                     .encode(
                         x=alt.X("Proceso:N", title="Proceso"),
-                        y=alt.Y("Brecha positiva:Q", title="Brecha pendiente (S/)", axis=alt.Axis(format=",.2f")),
+                        y=alt.Y("Brecha positiva:Q", title="Brecha pendiente (S/)", axis=alt.Axis(format="$,.2f")),
                         color=alt.value("#ff006e"),
                         tooltip=[
                             alt.Tooltip("Proceso:N", title="Proceso"),
-                            alt.Tooltip("Brecha positiva:Q", title="Brecha", format=",.2f"),
+                            alt.Tooltip("Brecha positiva:Q", title="Brecha", format="$,.2f"),
                         ],
                     )
                     .properties(height=220)
