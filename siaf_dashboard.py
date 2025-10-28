@@ -308,6 +308,70 @@ AMOUNT_KEYWORDS = (
 EXCLUDE_ROUND_COLS = {"mes", "rank_acum", "rank_mes", "n"}
 Z_SCORE_95 = 1.96
 
+FINANCIAL_RENAME_MAP = {
+    "mto_pia": "PIA",
+    "mto_pim": "PIM",
+    "mto_certificado": "CERTIFICADO",
+    "mto_compro_anual": "COMPROMETIDO",
+    "devengado": "DEVENGADO",
+    "AVANCE DE EJECUCIÓN ACUMULADO": "DEVENGADO",
+    "devengado_mes": "DEVENGADO MES",
+    "programado_mes": "PROGRAMADO MES",
+    "avance_%": "AVANCE",
+    "avance_acum_%": "AVANCE",
+    "% AVANCE DEV /PIM": "AVANCE",
+    "Avance%": "AVANCE",
+    "avance_programado_%": "AVANCE MES",
+    "% AVANCE DEV MES/PROG": "AVANCE MES",
+    "AvanceProgramado%": "AVANCE MES",
+    "avance_mes_%": "AVANCE MES (PIM)",
+    "no_certificado": "NO CERTIFICADO",
+    "saldo_pim": "NO CERTIFICADO",
+}
+FINANCIAL_ORDER = ("PIM", "CERTIFICADO", "COMPROMETIDO", "DEVENGADO", "AVANCE")
+FINANCIAL_MONTHLY_ORDER = ("DEVENGADO MES", "PROGRAMADO MES", "AVANCE MES")
+FINANCIAL_FINAL_COLUMN = "NO CERTIFICADO"
+PERCENT_DISPLAY_COLUMNS = {"AVANCE", "AVANCE MES"}
+
+
+def standardize_financial_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename and reorder budget execution columns following the requested layout."""
+
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+    rename_map = {
+        source: target
+        for source, target in FINANCIAL_RENAME_MAP.items()
+        if source in df.columns and source != target
+    }
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    columns = list(df.columns)
+    target_set = set(FINANCIAL_ORDER) | set(FINANCIAL_MONTHLY_ORDER) | {FINANCIAL_FINAL_COLUMN}
+    leading_columns = [c for c in columns if c not in target_set]
+    ordered = leading_columns
+    ordered.extend([c for c in FINANCIAL_ORDER if c in df.columns])
+    ordered.extend([c for c in FINANCIAL_MONTHLY_ORDER if c in df.columns])
+    if FINANCIAL_FINAL_COLUMN in df.columns:
+        ordered.append(FINANCIAL_FINAL_COLUMN)
+
+    # Ensure all columns are present in the final layout without duplication.
+    seen = set()
+    final_order = []
+    for col in ordered:
+        if col in df.columns and col not in seen:
+            final_order.append(col)
+            seen.add(col)
+    for col in df.columns:
+        if col not in seen:
+            final_order.append(col)
+            seen.add(col)
+
+    return df[final_order]
+
 
 def _format_amount(value):
     return "" if pd.isna(value) else f"{value:,.2f}"
@@ -325,7 +389,7 @@ def round_numeric_for_reporting(df):
         if col in EXCLUDE_ROUND_COLS:
             continue
         lower = col.lower()
-        if col.endswith("%"):
+        if col in PERCENT_DISPLAY_COLUMNS or col.endswith("%"):
             df[col] = df[col].round(2)
         elif any(keyword in lower for keyword in AMOUNT_KEYWORDS):
             df[col] = df[col].round(2)
@@ -340,7 +404,7 @@ def build_style_formatters(df):
         if col in EXCLUDE_ROUND_COLS:
             continue
         lower = col.lower()
-        if col.endswith("%"):
+        if col in PERCENT_DISPLAY_COLUMNS or col.endswith("%"):
             formatters[col] = _format_percent
         elif any(keyword in lower for keyword in AMOUNT_KEYWORDS):
             formatters[col] = _format_amount
@@ -1032,8 +1096,17 @@ def to_excel_download(
 
                 for col_idx, column_name in enumerate(df.columns):
                     if pd.api.types.is_numeric_dtype(df.iloc[:, col_idx]):
-                        fmt = percent_format if isinstance(column_name, str) and column_name.endswith("%") else currency_format
-                        worksheet.set_column(col_idx, col_idx, None, fmt)
+                        if isinstance(column_name, str):
+                            if column_name in PERCENT_DISPLAY_COLUMNS:
+                                fmt = None
+                            elif column_name.endswith("%"):
+                                fmt = percent_format
+                            else:
+                                fmt = currency_format
+                        else:
+                            fmt = currency_format
+                        if fmt is not None:
+                            worksheet.set_column(col_idx, col_idx, None, fmt)
 
                 if add_chart and max_row > 0 and max_col > 1:
                     chart = workbook.add_chart({"type": "column"})
@@ -1075,13 +1148,13 @@ def to_excel_download(
                 "values": [
                     {"field": "PIM", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "NO CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "COMPROMETIDO", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "DEVENGADO", "function": "sum", "num_format": "#,##0.00"},
+                    {"field": "AVANCE", "function": "average", "num_format": "0.00%"},
                     {"field": "DEVENGADO MES", "function": "sum", "num_format": "#,##0.00"},
                     {"field": "PROGRAMADO MES", "function": "sum", "num_format": "#,##0.00"},
-                    {"field": "Avance%", "function": "average", "num_format": "0.00%"},
-                    {"field": "AvanceProgramado%", "function": "average", "num_format": "0.00%"},
+                    {"field": "AVANCE MES", "function": "average", "num_format": "0.00%"},
+                    {"field": "NO CERTIFICADO", "function": "sum", "num_format": "#,##0.00"},
                 ],
             }
 
@@ -1648,13 +1721,15 @@ with tab_consol:
     if consolidado.empty:
         st.info("No hay información consolidada para mostrar.")
     else:
-        consol_display = round_numeric_for_reporting(consolidado.head(500))
+        consol_display = consolidado.head(500).copy()
+        consol_display = standardize_financial_columns(consol_display)
+        consol_display = round_numeric_for_reporting(consol_display)
         fmt_consol = build_style_formatters(consol_display)
         consol_style = consol_display.style
-        if "avance_%" in consol_display.columns:
+        if "AVANCE" in consol_display.columns:
             consol_style = consol_style.applymap(
                 lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else "",
-                subset=["avance_%"],
+                subset=["AVANCE"],
             )
         if fmt_consol:
             consol_style = consol_style.format(fmt_consol)
@@ -2294,12 +2369,18 @@ with tab_gestion:
             ])
             leaderboard_df = leaderboard_df[display_cols]
 
-            leaderboard_display = round_numeric_for_reporting(leaderboard_df)
+            leaderboard_display = leaderboard_df.copy()
+            leaderboard_display = standardize_financial_columns(leaderboard_display)
+            leaderboard_display = round_numeric_for_reporting(leaderboard_display)
             fmt_leader = build_style_formatters(leaderboard_display)
             highlight = lambda v: "background-color: #ffcccc" if v < float(riesgo_umbral) else ""
             leader_style = leaderboard_display.style.applymap(
                 highlight,
-                subset=[c for c in ["avance_acum_%", "avance_mes_%", "avance_programado_%"] if c in leaderboard_display.columns],
+                subset=[
+                    c
+                    for c in ["AVANCE", "AVANCE MES", "AVANCE MES (PIM)"]
+                    if c in leaderboard_display.columns
+                ],
             )
             if fmt_leader:
                 leader_style = leader_style.format(fmt_leader)
@@ -2373,13 +2454,13 @@ with tab_reporte:
             )
 
             value_sources = {
-                "AVANCE DE EJECUCIÓN ACUMULADO": "devengado",
                 "PIM": "mto_pim",
                 "CERTIFICADO": "mto_certificado",
-                "NO CERTIFICADO": "no_certificado",
                 "COMPROMETIDO": "mto_compro_anual",
+                "DEVENGADO": "devengado",
                 "DEVENGADO MES": "devengado_mes",
                 "PROGRAMADO MES": "programado_mes",
+                "NO CERTIFICADO": "no_certificado",
             }
             for src in value_sources.values():
                 if src not in reporte_base.columns:
@@ -2403,25 +2484,41 @@ with tab_reporte:
                         "sec_func": reporte_base["sec_func"].fillna("").astype(str),
                         "Generica": reporte_base["generica"].fillna("").astype(str),
                         "clasificador_cod-concepto": reporte_base["clasificador_cod_concepto"].fillna("").astype(str),
-                        "PIM": _safe_numeric("mto_pim"),
-                        "CERTIFICADO": _safe_numeric("mto_certificado"),
-                        "NO CERTIFICADO": _safe_numeric("no_certificado"),
-                        "COMPROMETIDO": _safe_numeric("mto_compro_anual"),
-                        "DEVENGADO": devengado_acum,
-                        "DEVENGADO MES": devengado_mes_series,
-                        "PROGRAMADO MES": programado_mes_series,
                     }
                 )
-                pivot_source_df["Avance%"] = np.where(
+                pivot_source_df["PIM"] = _safe_numeric("mto_pim")
+                pivot_source_df["CERTIFICADO"] = _safe_numeric("mto_certificado")
+                pivot_source_df["COMPROMETIDO"] = _safe_numeric("mto_compro_anual")
+                pivot_source_df["DEVENGADO"] = devengado_acum
+                pivot_source_df["DEVENGADO MES"] = devengado_mes_series
+                pivot_source_df["PROGRAMADO MES"] = programado_mes_series
+                pivot_source_df["NO CERTIFICADO"] = _safe_numeric("no_certificado")
+                pivot_source_df["AVANCE"] = np.where(
                     pivot_source_df["PIM"] > 0,
                     devengado_acum / pivot_source_df["PIM"],
                     0.0,
                 )
-                pivot_source_df["AvanceProgramado%"] = np.where(
+                pivot_source_df["AVANCE MES"] = np.where(
                     pivot_source_df["PROGRAMADO MES"] > 0,
                     devengado_mes_series / pivot_source_df["PROGRAMADO MES"],
                     0.0,
                 )
+                pivot_source_df = pivot_source_df[
+                    [
+                        "sec_func",
+                        "Generica",
+                        "clasificador_cod-concepto",
+                        "PIM",
+                        "CERTIFICADO",
+                        "COMPROMETIDO",
+                        "DEVENGADO",
+                        "AVANCE",
+                        "DEVENGADO MES",
+                        "PROGRAMADO MES",
+                        "AVANCE MES",
+                        "NO CERTIFICADO",
+                    ]
+                ]
                 reporte_siaf_pivot_source = pivot_source_df
             else:
                 reporte_siaf_pivot_source = pd.DataFrame()
@@ -2510,12 +2607,12 @@ with tab_reporte:
 
             if records:
                 reporte_siaf_df = pd.DataFrame.from_records(records)
-                reporte_siaf_df["% AVANCE DEV /PIM"] = np.where(
+                reporte_siaf_df["AVANCE"] = np.where(
                     reporte_siaf_df["PIM"].astype(float) > 0,
-                    reporte_siaf_df["AVANCE DE EJECUCIÓN ACUMULADO"].astype(float) / reporte_siaf_df["PIM"].astype(float) * 100.0,
+                    reporte_siaf_df["DEVENGADO"].astype(float) / reporte_siaf_df["PIM"].astype(float) * 100.0,
                     0.0,
                 )
-                reporte_siaf_df["% AVANCE DEV MES/PROG"] = np.where(
+                reporte_siaf_df["AVANCE MES"] = np.where(
                     reporte_siaf_df["PROGRAMADO MES"].astype(float) > 0,
                     reporte_siaf_df["DEVENGADO MES"].astype(float)
                     / reporte_siaf_df["PROGRAMADO MES"].astype(float)
@@ -2529,39 +2626,40 @@ with tab_reporte:
                 reporte_siaf_df = reporte_siaf_df[
                     [
                         "Centro de costo / Genérica de Gasto / Específica de Gasto",
-                        "AVANCE DE EJECUCIÓN ACUMULADO",
                         "PIM",
                         "CERTIFICADO",
-                        "NO CERTIFICADO",
                         "COMPROMETIDO",
+                        "DEVENGADO",
+                        "AVANCE",
                         "DEVENGADO MES",
                         "PROGRAMADO MES",
-                        "% AVANCE DEV MES/PROG",
-                        "% AVANCE DEV /PIM",
+                        "AVANCE MES",
+                        "NO CERTIFICADO",
                     ]
                 ]
             else:
                 reporte_siaf_df = pd.DataFrame(
                     columns=[
                         "Centro de costo / Genérica de Gasto / Específica de Gasto",
-                        "AVANCE DE EJECUCIÓN ACUMULADO",
                         "PIM",
                         "CERTIFICADO",
-                        "NO CERTIFICADO",
                         "COMPROMETIDO",
+                        "DEVENGADO",
+                        "AVANCE",
                         "DEVENGADO MES",
                         "PROGRAMADO MES",
-                        "% AVANCE DEV MES/PROG",
-                        "% AVANCE DEV /PIM",
+                        "AVANCE MES",
+                        "NO CERTIFICADO",
                     ]
                 )
 
-            reporte_display = round_numeric_for_reporting(reporte_siaf_df)
+            reporte_display = standardize_financial_columns(reporte_siaf_df)
+            reporte_display = round_numeric_for_reporting(reporte_display)
             fmt_reporte = build_style_formatters(reporte_display)
             reporte_style = reporte_display.style
             highlight_cols = [
                 col
-                for col in ["% AVANCE DEV /PIM", "% AVANCE DEV MES/PROG"]
+                for col in ["AVANCE", "AVANCE MES"]
                 if col in reporte_display.columns
             ]
             if highlight_cols:
@@ -2593,12 +2691,12 @@ with tab_descarga:
     excel_engine = None
     try:
         excel_buffer, excel_engine = to_excel_download(
-            resumen=round_numeric_for_reporting(pivot.copy()),
+            resumen=round_numeric_for_reporting(standardize_financial_columns(pivot.copy())),
             avance=round_numeric_for_reporting(avance_series.copy()),
             proyeccion=proyeccion_wide,
             ritmo=round_numeric_for_reporting(ritmo_df.copy()),
-            leaderboard=round_numeric_for_reporting(leaderboard_df.copy()),
-            reporte_siaf=round_numeric_for_reporting(reporte_siaf_df.copy()),
+            leaderboard=round_numeric_for_reporting(standardize_financial_columns(leaderboard_df.copy())),
+            reporte_siaf=round_numeric_for_reporting(standardize_financial_columns(reporte_siaf_df.copy())),
             reporte_siaf_pivot_source=reporte_siaf_pivot_source.copy(),
         )
     except ModuleNotFoundError as exc:
