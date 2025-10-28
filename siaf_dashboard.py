@@ -38,18 +38,20 @@ def _list_excel_candidates(folder: Path) -> List[Path]:
 EXCEL_CANDIDATES = _list_excel_candidates(EXCEL_SOURCE_DIR)
 LATEST_EXCEL = EXCEL_CANDIDATES[0] if EXCEL_CANDIDATES else None
 
-PRIMARY_COLOR = "#ff296d"
-SECONDARY_COLOR = "#0b0f2f"
-ACCENT_COLOR = "#00eaff"
-GLOW_COLOR = "#b388ff"
+PRIMARY_COLOR = "#1f3a5f"
+SECONDARY_COLOR = "#0b1d3a"
+ACCENT_COLOR = "#2e8bc0"
+HIGHLIGHT_COLOR = "#f6ae2d"
+CALM_COLOR = "#9fb4c7"
+CHART_BACKGROUND = "#f6f7fb"
 
-ARCADE_COLOR_RANGE = [
-    "#00eaff",
-    "#ff296d",
-    "#ffe45c",
-    "#19f5aa",
-    "#b388ff",
-    "#ff9d00",
+DASHBOARD_COLOR_RANGE = [
+    "#2e8bc0",
+    "#145da0",
+    "#70a288",
+    "#f6ae2d",
+    "#a2aebb",
+    "#ef8354",
 ]
 
 try:
@@ -98,150 +100,136 @@ LOGO_IMAGE = base64.b64decode(LOGO_BASE64)
 
 APP_CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Rajdhani:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=Space+Grotesk:wght@500&display=swap');
 
 :root {{
-    --primary-color: {PRIMARY_COLOR};
-    --accent-color: {ACCENT_COLOR};
-    --secondary-color: {SECONDARY_COLOR};
-    --surface-color: rgba(16, 21, 46, 0.92);
-    --panel-border: rgba(0, 234, 255, 0.35);
-    --glow-color: {GLOW_COLOR};
+    --primary-color: {{PRIMARY_COLOR}};
+    --accent-color: {{ACCENT_COLOR}};
+    --secondary-color: {{SECONDARY_COLOR}};
+    --highlight-color: {{HIGHLIGHT_COLOR}};
+    --surface-color: rgba(255, 255, 255, 0.9);
+    --panel-border: rgba(31, 58, 95, 0.18);
+    --soft-shadow: rgba(15, 41, 66, 0.16);
+    --muted-text: #5b6c7c;
 }}
 
-html, body, [data-testid="stAppViewContainer"] {{
-    background: radial-gradient(circle at 20% 20%, rgba(0, 234, 255, 0.18), rgba(11, 15, 47, 0.95) 55%) fixed;
-    color: #f1f5ff;
-    font-family: 'Rajdhani', sans-serif;
+html, body, [data-testid=\"stAppViewContainer\"] {{
+    background: linear-gradient(145deg, #f2f6fb 0%, #dbe4ee 100%) fixed;
+    color: #1c2a3a;
+    font-family: 'Poppins', sans-serif;
 }}
 
-[data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, rgba(19, 32, 67, 0.95), rgba(11, 15, 47, 0.85));
-    border-right: 1px solid rgba(0, 234, 255, 0.25);
+[data-testid=\"stAppViewContainer\"] > .main {{
+    padding-top: 1.5rem;
 }}
 
-[data-testid="stSidebar"] * {{
-    color: #e3f6ff !important;
+[data-testid=\"stSidebar\"] {{
+    background: linear-gradient(180deg, rgba(15, 32, 58, 0.95), rgba(15, 32, 58, 0.85));
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+}}
+
+[data-testid=\"stSidebar\"] * {{
+    color: #f4f7fb !important;
 }}
 
 .app-title {{
-    font-family: 'Orbitron', sans-serif;
-    font-size: 2.8rem;
-    font-weight: 700;
-    margin-bottom: 0.1rem;
-    color: var(--accent-color);
-    text-shadow: 0 0 18px rgba(0, 234, 255, 0.65);
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 2.5rem;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+    color: var(--primary-color);
 }}
 
 .app-subtitle {{
-    color: #f06292;
-    font-size: 1.15rem;
+    color: var(--accent-color);
+    font-size: 1.1rem;
     margin-top: 0;
-    margin-bottom: 0.6rem;
-    letter-spacing: 0.12rem;
+    margin-bottom: 0.75rem;
+    letter-spacing: 0.08rem;
 }}
 
 .app-description {{
-    color: #d0dcff;
+    color: var(--muted-text);
     font-size: 1.02rem;
     line-height: 1.6rem;
-    background: rgba(15, 20, 45, 0.65);
-    padding: 0.85rem 1.2rem;
-    border-radius: 12px;
-    border: 1px solid rgba(0, 234, 255, 0.15);
-    box-shadow: inset 0 0 14px rgba(255, 41, 109, 0.18);
+    background: rgba(255, 255, 255, 0.85);
+    padding: 0.9rem 1.2rem;
+    border-radius: 14px;
+    border: 1px solid rgba(31, 58, 95, 0.12);
+    box-shadow: 0 14px 32px rgba(15, 41, 66, 0.1);
 }}
 
-.stTabs [data-baseweb="tab"] {{
-    color: rgba(227, 246, 255, 0.85);
-    font-weight: 700;
+.stTabs [data-baseweb=\"tab\"] {{
+    color: rgba(28, 42, 58, 0.75);
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08rem;
-    font-family: 'Orbitron', sans-serif;
-}}
-
-.stTabs [data-baseweb="tab"]:hover {{
-    color: var(--accent-color);
-}}
-
-.stTabs [data-baseweb="tab"][aria-selected="true"] {{
-    color: var(--primary-color);
-    border-bottom: 4px solid var(--accent-color);
-    text-shadow: 0 0 8px rgba(0, 234, 255, 0.55);
-}}
-
-[data-testid="stMetricValue"] {{
-    color: #ffe45c;
-    font-family: 'Orbitron', sans-serif;
-    text-shadow: 0 0 15px rgba(255, 228, 92, 0.55);
-}}
-
-[data-testid="stMetricLabel"] {{
-    color: rgba(227, 246, 255, 0.75);
-    font-weight: 600;
     letter-spacing: 0.06rem;
+    font-family: 'Space Grotesk', sans-serif;
 }}
 
-.stRadio > div {{
-    background-color: rgba(0, 234, 255, 0.08);
-    border-radius: 999px;
-    padding: 0.4rem 0.8rem;
-    border: 1px solid rgba(0, 234, 255, 0.25);
-}}
-
-.stRadio [data-baseweb="radio"] label span {{
-    font-weight: 600;
-    color: rgba(227, 246, 255, 0.85);
-}}
-
-.stRadio [data-baseweb="radio"] input:checked + span {{
+.stTabs [data-baseweb=\"tab\"]:hover {{
     color: var(--accent-color);
-    text-shadow: 0 0 10px rgba(0, 234, 255, 0.65);
+}}
+
+.stTabs [data-baseweb=\"tab\"][aria-selected=\"true\"] {{
+    color: var(--primary-color);
+    border-bottom: 3px solid var(--accent-color);
+}}
+
+[data-testid=\"stMetricValue\"] {{
+    color: var(--primary-color);
+    font-family: 'Space Grotesk', sans-serif;
+}}
+
+[data-testid=\"stMetricLabel\"] {{
+    color: rgba(28, 42, 58, 0.72);
+    font-weight: 600;
+    letter-spacing: 0.04rem;
 }}
 
 .stButton>button, .stDownloadButton>button {{
     background: linear-gradient(135deg, var(--accent-color), var(--primary-color));
     color: #ffffff;
-    font-weight: 700;
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    box-shadow: 0 12px 28px rgba(0, 234, 255, 0.25);
+    font-weight: 600;
+    border: none;
+    box-shadow: 0 14px 32px rgba(15, 41, 66, 0.18);
     border-radius: 999px;
     text-transform: uppercase;
-    letter-spacing: 0.08rem;
+    letter-spacing: 0.05rem;
 }}
 
 .stButton>button:hover, .stDownloadButton>button:hover {{
-    box-shadow: 0 18px 42px rgba(255, 41, 109, 0.35);
+    box-shadow: 0 18px 40px rgba(15, 41, 66, 0.25);
 }}
 
 .neon-card {{
-    background: linear-gradient(145deg, rgba(11, 16, 38, 0.96), rgba(21, 37, 71, 0.92));
+    background: var(--surface-color);
     border: 1px solid var(--panel-border);
     border-radius: 18px;
     padding: 1.6rem 1.8rem;
     margin-bottom: 1.4rem;
     position: relative;
     overflow: hidden;
-    box-shadow: 0 18px 32px rgba(0, 0, 0, 0.35), inset 0 0 22px rgba(0, 234, 255, 0.08);
+    box-shadow: 0 18px 38px var(--soft-shadow);
 }}
 
 .neon-card:before {{
     content: "";
     position: absolute;
-    inset: -80px;
-    background: conic-gradient(from 0deg, rgba(0, 234, 255, 0.35), transparent 45%, rgba(255, 41, 109, 0.35), transparent 75%);
-    filter: blur(60px);
-    opacity: 0.5;
-    animation: pulseGlow 12s linear infinite;
+    top: -40%;
+    right: -30%;
+    width: 60%;
+    height: 160%;
+    background: radial-gradient(circle at center, rgba(46, 139, 192, 0.2), transparent 70%);
+    transform: rotate(12deg);
 }}
 
 .neon-card:after {{
     content: "";
     position: absolute;
-    inset: 2px;
+    inset: 1px;
     border-radius: 16px;
-    background: rgba(5, 8, 22, 0.88);
-    box-shadow: inset 0 0 18px rgba(0, 234, 255, 0.08);
+    background: rgba(255, 255, 255, 0.92);
 }}
 
 .neon-card > * {{
@@ -257,30 +245,31 @@ html, body, [data-testid="stAppViewContainer"] {{
 }}
 
 .panel-icon {{
-    width: 48px;
-    height: 48px;
+    width: 46px;
+    height: 46px;
     border-radius: 50%;
     display: grid;
     place-items: center;
-    font-size: 1.6rem;
-    background: rgba(0, 234, 255, 0.15);
-    border: 1px solid rgba(0, 234, 255, 0.45);
-    box-shadow: 0 0 18px rgba(0, 234, 255, 0.35);
+    font-size: 1.4rem;
+    background: rgba(46, 139, 192, 0.15);
+    border: 1px solid rgba(46, 139, 192, 0.35);
+    color: var(--accent-color);
 }}
 
 .panel-title {{
-    font-family: 'Orbitron', sans-serif;
-    font-size: 1.55rem;
-    letter-spacing: 0.08rem;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.45rem;
+    letter-spacing: 0.04rem;
     text-transform: uppercase;
+    color: var(--primary-color);
 }}
 
 .panel-subtitle {{
-    color: rgba(227, 246, 255, 0.7);
-    margin-top: -0.8rem;
+    color: var(--muted-text);
+    margin-top: -0.6rem;
     margin-bottom: 1.1rem;
     font-size: 0.95rem;
-    letter-spacing: 0.05rem;
+    letter-spacing: 0.03rem;
 }}
 
 .panel-body {{
@@ -290,52 +279,52 @@ html, body, [data-testid="stAppViewContainer"] {{
 
 .analysis-bubble {{
     margin-top: 1.1rem;
-    padding: 0.9rem 1.1rem;
+    padding: 0.85rem 1.1rem;
     border-radius: 14px;
-    background: rgba(255, 41, 109, 0.08);
-    border: 1px solid rgba(255, 41, 109, 0.45);
-    box-shadow: 0 0 18px rgba(255, 41, 109, 0.25);
+    background: rgba(46, 139, 192, 0.08);
+    border: 1px solid rgba(46, 139, 192, 0.25);
+    box-shadow: 0 12px 28px rgba(15, 41, 66, 0.08);
     font-weight: 600;
     display: flex;
     gap: 0.75rem;
     align-items: flex-start;
-    color: #ffdce6;
+    color: #1c2a3a;
 }}
 
 .analysis-icon {{
     font-size: 1.2rem;
-    margin-top: 0.2rem;
+    margin-top: 0.15rem;
 }}
 
 .neon-subheader {{
-    font-family: 'Orbitron', sans-serif;
+    font-family: 'Space Grotesk', sans-serif;
     text-transform: uppercase;
-    letter-spacing: 0.12rem;
+    letter-spacing: 0.1rem;
     color: var(--accent-color);
     margin-top: 1.4rem;
     margin-bottom: 0.6rem;
-    text-shadow: 0 0 12px rgba(0, 234, 255, 0.55);
 }}
 
 .stSlider > div {{
     padding: 0.4rem 0.7rem;
-    background: rgba(0, 234, 255, 0.06);
+    background: rgba(46, 139, 192, 0.08);
     border-radius: 14px;
-    border: 1px solid rgba(0, 234, 255, 0.18);
+    border: 1px solid rgba(46, 139, 192, 0.18);
 }}
 
-.stSlider [data-baseweb="slider"] > div > div {{
-    background: linear-gradient(90deg, rgba(0, 234, 255, 0.75), rgba(255, 41, 109, 0.75));
+.stSlider [data-baseweb=\"slider\"] > div > div {{
+    background: linear-gradient(90deg, var(--accent-color), var(--highlight-color));
 }}
 
 .stSelectbox label, .stMultiselect label {{
     text-transform: uppercase;
-    font-family: 'Orbitron', sans-serif;
-    letter-spacing: 0.08rem;
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: 0.06rem;
+    color: var(--muted-text);
 }}
 
 .stDataFrame {{
-    filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.45));
+    filter: drop-shadow(0 12px 24px rgba(15, 41, 66, 0.12));
 }}
 
 .stDataFrame table {{
@@ -343,21 +332,15 @@ html, body, [data-testid="stAppViewContainer"] {{
     overflow: hidden;
 }}
 
-.stDataFrame [role="gridcell"], .stDataFrame [role="columnheader"] {{
-    color: #f1f5ff !important;
-    background-color: rgba(9, 14, 29, 0.85) !important;
-    border-color: rgba(0, 234, 255, 0.12) !important;
+.stDataFrame [role=\"gridcell\"], .stDataFrame [role=\"columnheader\"] {{
+    color: #1c2a3a !important;
+    background-color: rgba(255, 255, 255, 0.96) !important;
+    border-color: rgba(31, 58, 95, 0.12) !important;
 }}
 
-.stDataFrame [role="columnheader"] {{
-    font-family: 'Orbitron', sans-serif;
-    letter-spacing: 0.05rem;
-}}
-
-@keyframes pulseGlow {{
-    0% {{ transform: rotate(0deg); opacity: 0.4; }}
-    50% {{ transform: rotate(180deg); opacity: 0.8; }}
-    100% {{ transform: rotate(360deg); opacity: 0.4; }}
+.stDataFrame [role=\"columnheader\"] {{
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: 0.04rem;
 }}
 </style>"""
 
@@ -369,7 +352,7 @@ st.markdown(APP_CSS, unsafe_allow_html=True)
 
 
 @contextmanager
-def neon_panel(title: str, icon: str = "🕹️", subtitle: str | None = None):
+def neon_panel(title: str, icon: str = "📊", subtitle: str | None = None):
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     subtitle_html = f"<div class='panel-subtitle'>{subtitle}</div>" if subtitle else ""
     st.markdown(
@@ -385,7 +368,7 @@ def neon_panel(title: str, icon: str = "🕹️", subtitle: str | None = None):
         st.markdown("</div></div>", unsafe_allow_html=True)
 
 
-def neon_subheader(text: str, icon: str = "✨") -> None:
+def neon_subheader(text: str, icon: str = "📌") -> None:
     st.markdown(
         f"<h3 class='neon-subheader'><span>{icon}</span> {text}</h3>",
         unsafe_allow_html=True,
@@ -399,29 +382,96 @@ def render_analysis(text: str, icon: str = "🧠") -> None:
     )
 
 
-def style_arcade_chart(chart: alt.Chart) -> alt.Chart:
+def render_performance_spotlight(
+    df: pd.DataFrame,
+    label_col: str,
+    key_prefix: str,
+    *,
+    title: str = "Explorador interactivo",
+) -> None:
+    """Render an interactive selector with metrics and progress for the chosen label."""
+
+    if df is None or df.empty or label_col not in df.columns:
+        return
+
+    working = df.copy()
+    working[label_col] = working[label_col].fillna("Sin clasificación").astype(str)
+    options = sorted(working[label_col].unique())
+    if not options:
+        return
+
+    default_option = options[0]
+    if "devengado" in working.columns:
+        sorted_working = working.sort_values("devengado", ascending=False)
+        default_option = sorted_working[label_col].iloc[0]
+
+    st.markdown(f"<div class='neon-subheader'>{title}</div>", unsafe_allow_html=True)
+    selected = st.selectbox(
+        "Selecciona una genérica para explorar su desempeño",
+        options,
+        index=options.index(default_option),
+        key=f"{key_prefix}_spot_option",
+    )
+
+    row = working[working[label_col] == selected].iloc[0]
+    pim = float(row.get("mto_pim", 0.0) or 0.0)
+    certificado = float(row.get("mto_certificado", 0.0) or 0.0)
+    devengado = float(row.get("devengado", 0.0) or 0.0)
+    avance_actual = float(row.get("avance_actual_%", row.get("avance_%", 0.0)) or 0.0)
+    no_certificado = float(row.get("no_certificado", 0.0) or 0.0)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("PIM", f"S/. {pim:,.2f}")
+    c2.metric("Devengado", f"S/. {devengado:,.2f}")
+    c3.metric("Avance", f"{avance_actual:.2f}%")
+
+    st.progress(min(max(avance_actual / 100.0, 0.0), 1.0))
+
+    objetivo = st.slider(
+        "Define una meta anual para esta genérica",
+        min_value=0,
+        max_value=100,
+        value=int(round(max(avance_actual, 0.0))),
+        key=f"{key_prefix}_spot_goal",
+    )
+    brecha = max(objetivo - avance_actual, 0.0)
+    texto_brecha = (
+        "Meta alcanzada, ¡excelente desempeño!"
+        if brecha <= 0.01
+        else f"Faltan {brecha:.2f} puntos porcentuales para la meta definida."
+    )
+    st.caption(
+        f"Certificado: S/. {certificado:,.2f} · No certificado: S/. {no_certificado:,.2f}. {texto_brecha}"
+    )
+
+
+def style_dashboard_chart(chart: alt.Chart) -> alt.Chart:
     return (
         chart.configure_view(
             strokeOpacity=0,
-            fill="#0b1126",
+            fill=CHART_BACKGROUND,
         )
         .configure_axis(
-            labelColor="#e3f6ff",
-            titleColor="#78f1ff",
-            gridColor="rgba(120, 241, 255, 0.12)",
-            domainColor="rgba(120, 241, 255, 0.28)",
+            labelColor="#2f3b4c",
+            titleColor=PRIMARY_COLOR,
+            gridColor="rgba(47, 59, 76, 0.15)",
+            domainColor="rgba(47, 59, 76, 0.25)",
+            labelFont="Poppins",
+            titleFont="Space Grotesk",
         )
         .configure_legend(
-            labelColor="#e3f6ff",
-            titleColor="#78f1ff",
+            labelColor="#2f3b4c",
+            titleColor=PRIMARY_COLOR,
             orient="bottom",
             direction="horizontal",
-            symbolType="stroke",
+            symbolType="circle",
             symbolSize=150,
+            labelFont="Poppins",
+            titleFont="Space Grotesk",
         )
         .configure_title(
-            font="Orbitron",
-            color="#e3f6ff",
+            font="Space Grotesk",
+            color=PRIMARY_COLOR,
             fontWeight="bold",
         )
     )
@@ -1322,7 +1372,7 @@ def to_excel_download(
         currency_format = None
         percent_format = None
         if use_xlsxwriter and workbook is not None:
-            header_format = workbook.add_format({"bold": True, "bg_color": "#c62828", "font_color": "#ffffff"})
+            header_format = workbook.add_format({"bold": True, "bg_color": PRIMARY_COLOR, "font_color": "#ffffff"})
             currency_format = workbook.add_format({"num_format": EXCEL_CURRENCY_FORMAT})
             percent_format = workbook.add_format({"num_format": EXCEL_PERCENT_FORMAT})
 
@@ -1980,12 +2030,20 @@ with tab_resumen:
             f"El certificado cubre el {cert_ratio:.2f}% del presupuesto, dejando S/ {_no_certificado:,.2f} sin certificar.",
             icon="🧭",
         )
+        if 'aggregated_generica' in globals() and not aggregated_generica.empty:
+            with st.expander("Modo explorador por genérica", expanded=False):
+                render_performance_spotlight(
+                    aggregated_generica,
+                    label_col="generica",
+                    key_prefix="resumen",
+                    title="Explorador por genérica",
+                )
 
 with tab_consol:
     with neon_panel(
         "Consolidado por clasificador",
         icon="📊",
-        subtitle="Top clasificadores con visión arcade del devengado",
+        subtitle="Top clasificadores con lectura ejecutiva del devengado",
     ):
         if consolidado.empty:
             st.info("No hay información consolidada para mostrar.")
@@ -1997,7 +2055,7 @@ with tab_consol:
             consol_style = consol_display.style
             if "AVANCE" in consol_display.columns:
                 consol_style = consol_style.applymap(
-                    lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                    lambda v: "background-color: rgba(246, 174, 45, 0.25); color: #1c2a3a;"
                     if v < float(riesgo_umbral)
                     else "",
                     subset=["AVANCE"],
@@ -2046,7 +2104,7 @@ with tab_avance:
     with neon_panel(
         "Avance mensual interactivo",
         icon="🚀",
-        subtitle="Comparte ritmo mensual y acumulado como si fuera un marcador de arcade",
+        subtitle="Ritmo mensual y acumulado con seguimiento intuitivo",
     ):
         if avance_series.empty:
             st.info("No hay información de devengado mensual para graficar.")
@@ -2081,7 +2139,7 @@ with tab_avance:
                 )
                 line = (
                     alt.Chart(avance_display)
-                    .mark_line(color=PRIMARY_COLOR, point=alt.OverlayMarkDef(color="#ffe45c"), strokeWidth=3)
+                    .mark_line(color=PRIMARY_COLOR, point=alt.OverlayMarkDef(color=HIGHLIGHT_COLOR), strokeWidth=3)
                     .encode(
                         x=alt.X("mes:O", title="Mes"),
                         y=alt.Y(
@@ -2101,14 +2159,14 @@ with tab_avance:
                     .properties(width=520, height=280)
                     .interactive()
                 )
-                st.altair_chart(style_arcade_chart(chart), use_container_width=True)
+                st.altair_chart(style_dashboard_chart(chart), use_container_width=True)
             else:
                 avance_table = round_numeric_for_reporting(avance_display)
                 fmt_avance = build_style_formatters(avance_table)
                 avance_style = avance_table.style
                 if "%_acumulado" in avance_table.columns:
                     avance_style = avance_style.applymap(
-                        lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                        lambda v: "background-color: rgba(246, 174, 45, 0.25); color: #1c2a3a;"
                         if v < float(riesgo_umbral)
                         else "",
                         subset=["%_acumulado"],
@@ -2190,7 +2248,7 @@ with tab_saldos:
                         color=alt.Color(
                             "generica:N",
                             title="Genérica de gasto",
-                            scale=alt.Scale(range=ARCADE_COLOR_RANGE),
+                            scale=alt.Scale(range=DASHBOARD_COLOR_RANGE),
                         ),
                         strokeDash=alt.StrokeDash("concepto:N", title="Concepto"),
                         tooltip=[
@@ -2202,7 +2260,7 @@ with tab_saldos:
                     )
                     .properties(height=320)
                 )
-                st.altair_chart(style_arcade_chart(monthly_chart), use_container_width=True)
+                st.altair_chart(style_dashboard_chart(monthly_chart), use_container_width=True)
 
                 neon_subheader("Saldo acumulado y no certificado", icon="🛸")
                 cumulative_chart = (
@@ -2221,7 +2279,7 @@ with tab_saldos:
                             title="Concepto",
                             scale=alt.Scale(
                                 domain=["Saldo programado acumulado", "No certificado"],
-                                range=["#6f2cff", "#ff9d00"],
+                                range=[ACCENT_COLOR, HIGHLIGHT_COLOR],
                             ),
                         ),
                         tooltip=[
@@ -2233,7 +2291,7 @@ with tab_saldos:
                     )
                     .properties(height=320)
                 )
-                st.altair_chart(style_arcade_chart(cumulative_chart), use_container_width=True)
+                st.altair_chart(style_dashboard_chart(cumulative_chart), use_container_width=True)
 
                 month_totals = (
                     monthly_filtered.groupby(["Mes", "concepto"], dropna=False)["monto"].sum().reset_index()
@@ -2260,7 +2318,7 @@ with tab_simulacion:
     with neon_panel(
         "Simulación de devolución de saldos",
         icon="🧠",
-        subtitle="Escenarios arcade para optimizar devoluciones y sostener el avance anual",
+        subtitle="Escenarios para optimizar devoluciones y sostener el avance anual",
     ):
         if simulation_detail_df.empty or simulation_overview_df.empty:
             st.info(
@@ -2308,7 +2366,7 @@ with tab_simulacion:
             else:
                 neon_subheader("Panel de control de devoluciones", icon="🎛️")
                 st.caption(
-                    "Arrastra los deslizadores neón para decidir cuánto devolver en cada genérica. El rango máximo se adapta al saldo disponible y parte de la sugerencia inteligente."
+                    "Arrastra los deslizadores interactivos para decidir cuánto devolver en cada genérica. El rango máximo se adapta al saldo disponible y parte de la sugerencia inteligente."
                 )
 
                 slider_columns = st.columns(min(3, len(adjustable_rows)))
@@ -2530,7 +2588,7 @@ with tab_simulacion:
                         color=alt.Color(
                             "Tipo:N",
                             title="Tramo",
-                            scale=alt.Scale(domain=["Histórico", "Proyección"], range=["#00eaff", "#ff296d"]),
+                            scale=alt.Scale(domain=["Histórico", "Proyección"], range=[ACCENT_COLOR, PRIMARY_COLOR]),
                         ),
                         tooltip=[
                             alt.Tooltip("Mes", title="Mes"),
@@ -2544,7 +2602,7 @@ with tab_simulacion:
                 )
                 trajectory_points = (
                     alt.Chart(selected_df)
-                    .mark_point(filled=True, size=100, color="#ffe45c")
+                    .mark_point(filled=True, size=100, color=HIGHLIGHT_COLOR)
                     .encode(
                         x=alt.X("Mes:N", sort=month_label_order),
                         y=alt.Y("Acumulado:Q"),
@@ -2558,7 +2616,7 @@ with tab_simulacion:
                     )
                 )
                 st.altair_chart(
-                    style_arcade_chart(trajectory_chart + trajectory_points),
+                    style_dashboard_chart(trajectory_chart + trajectory_points),
                     use_container_width=True,
                 )
 
@@ -2575,7 +2633,7 @@ with tab_simulacion:
                         color=alt.Color(
                             "Tipo:N",
                             title="Tramo",
-                            scale=alt.Scale(domain=["Histórico", "Proyección"], range=["#19f5aa", "#ff9d00"]),
+                            scale=alt.Scale(domain=["Histórico", "Proyección"], range=[CALM_COLOR, HIGHLIGHT_COLOR]),
                         ),
                         tooltip=[
                             alt.Tooltip("Mes", title="Mes"),
@@ -2586,7 +2644,7 @@ with tab_simulacion:
                     )
                     .properties(height=220)
                 )
-                st.altair_chart(style_arcade_chart(avance_chart), use_container_width=True)
+                st.altair_chart(style_dashboard_chart(avance_chart), use_container_width=True)
             else:
                 st.info(
                     "No se pudo generar la línea histórica y proyectada porque no hay datos mensuales de devengado disponibles."
@@ -2622,7 +2680,7 @@ with tab_simulacion:
                             color=alt.Color(
                                 "Tipo:N",
                                 title="Escenario",
-                                scale=alt.Scale(range=["#00eaff", "#ff296d"]),
+                                scale=alt.Scale(range=[ACCENT_COLOR, PRIMARY_COLOR]),
                             ),
                             opacity=alt.condition(hover_selection, alt.value(1.0), alt.value(0.45)),
                             tooltip=[
@@ -2634,7 +2692,7 @@ with tab_simulacion:
                         .properties(height=320)
                         .interactive()
                     )
-                    st.altair_chart(style_arcade_chart(returns_chart), use_container_width=True)
+                    st.altair_chart(style_dashboard_chart(returns_chart), use_container_width=True)
 
             if not simulation_per_gen_df.empty:
                 neon_subheader("Impacto por genérica evaluada", icon="🛰️")
@@ -2813,7 +2871,7 @@ with tab_gestion:
                     ritmo_style = ritmo_style.format(fmt_ritmo)
                 st.dataframe(ritmo_style, use_container_width=True)
 
-                neon_subheader("Tablero visual neón", icon="🧾")
+                neon_subheader("Tablero visual interactivo", icon="🧾")
                 ritmo_melt = ritmo_dynamic.melt(
                     "Proceso",
                     value_vars=["Actual", "Necesario", "Ritmo ajustado"],
@@ -2829,7 +2887,7 @@ with tab_gestion:
                         color=alt.Color(
                             "Escenario:N",
                             title="Escenario",
-                            scale=alt.Scale(range=["#00eaff", "#ff296d", "#ffe45c"]),
+                            scale=alt.Scale(range=[ACCENT_COLOR, PRIMARY_COLOR, HIGHLIGHT_COLOR]),
                         ),
                         tooltip=[
                             alt.Tooltip("Proceso:N", title="Proceso"),
@@ -2840,7 +2898,7 @@ with tab_gestion:
                     .properties(height=320)
                     .interactive()
                 )
-                st.altair_chart(style_arcade_chart(ritmo_chart), use_container_width=True)
+                st.altair_chart(style_dashboard_chart(ritmo_chart), use_container_width=True)
 
                 brecha_chart_df = ritmo_dynamic.copy()
                 brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha restante (S/)"]
@@ -2848,11 +2906,11 @@ with tab_gestion:
                 if brecha_chart_df["Brecha positiva"].sum() > 0:
                     brecha_chart = (
                         alt.Chart(brecha_chart_df)
-                        .mark_area(line={"color": "#ff296d", "size": 3})
+                    .mark_area(line={"color": PRIMARY_COLOR, "size": 3})
                         .encode(
                             x=alt.X("Proceso:N", title="Proceso"),
                             y=alt.Y("Brecha positiva:Q", title="Brecha pendiente (S/)", axis=alt.Axis(format="$,.2f")),
-                            color=alt.value("#ff296d"),
+                            color=alt.value(PRIMARY_COLOR),
                             tooltip=[
                                 alt.Tooltip("Proceso:N", title="Proceso"),
                                 alt.Tooltip("Brecha positiva:Q", title="Brecha", format="$,.2f"),
@@ -2861,7 +2919,7 @@ with tab_gestion:
                         .properties(height=220)
                         .interactive()
                     )
-                    st.altair_chart(style_arcade_chart(brecha_chart), use_container_width=True)
+                    st.altair_chart(style_dashboard_chart(brecha_chart), use_container_width=True)
 
                 if not ritmo_dynamic.empty:
                     brechas = ritmo_dynamic["Brecha restante (S/)"]
@@ -2951,7 +3009,7 @@ with tab_gestion:
                 leaderboard_display = round_numeric_for_reporting(leaderboard_display)
                 fmt_leader = build_style_formatters(leaderboard_display)
                 leader_style = leaderboard_display.style.applymap(
-                    lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                    lambda v: "background-color: rgba(246, 174, 45, 0.25); color: #1c2a3a;"
                     if v < float(riesgo_umbral)
                     else "",
                     subset=[
@@ -2982,7 +3040,7 @@ with tab_reporte:
     with neon_panel(
         "Reporte SIAF por área, genérica y específica detalle",
         icon="📚",
-        subtitle="Explora la jerarquía de clasificadores con el brillo de una interfaz arcade",
+        subtitle="Explora la jerarquía de clasificadores con una interfaz profesional",
     ):
         reporte_siaf_pivot_source = pd.DataFrame()
         if not all(col in df_view.columns for col in ["sec_func", "generica", "especifica_det"]):
@@ -3248,7 +3306,7 @@ with tab_reporte:
             ]
             if highlight_cols:
                 reporte_style = reporte_style.applymap(
-                    lambda v: "background-color: rgba(255, 41, 109, 0.35); color: #fff;"
+                    lambda v: "background-color: rgba(246, 174, 45, 0.25); color: #1c2a3a;"
                     if v < float(riesgo_umbral)
                     else "",
                     subset=highlight_cols,
