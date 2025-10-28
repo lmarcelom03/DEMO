@@ -2134,24 +2134,25 @@ with tab_simulacion:
             )
 
             if metric_options:
-                metric_binding = alt.binding_select(options=metric_options, name="Indicador")
-                metric_selection = alt.selection_single(
-                    fields=["Indicador"],
-                    bind=metric_binding,
-                    init={"Indicador": metric_options[0]},
+                selected_metric = st.selectbox(
+                    "Indicador a comparar",
+                    metric_options,
+                    key="simulaciones_metric_selector",
                 )
+                metric_chart_source = scenarios_chart_df[
+                    (scenarios_chart_df["Tipo"] == "Monto")
+                    & (scenarios_chart_df["Indicador"] == selected_metric)
+                ]
                 metric_chart = (
-                    alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Monto"])
-                    .add_selection(metric_selection)
-                    .transform_filter(metric_selection)
+                    alt.Chart(metric_chart_source)
                     .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
                     .encode(
                         x=alt.X("Escenario:N", title="Escenario"),
-                        y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
+                        y=alt.Y("Monto:Q", title=f"{selected_metric} (S/)", axis=alt.Axis(format=",.2f")),
                         color=alt.Color("Escenario:N", title="Escenario", scale=alt.Scale(scheme="tableau20")),
                         tooltip=[
                             alt.Tooltip("Escenario:N", title="Escenario"),
-                            alt.Tooltip("Monto:Q", title="Monto (S/)", format=",.2f"),
+                            alt.Tooltip("Monto:Q", title=f"{selected_metric} (S/)", format=",.2f"),
                         ],
                     )
                     .properties(height=300)
