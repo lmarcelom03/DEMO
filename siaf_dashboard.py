@@ -1989,29 +1989,57 @@ with tab_simulacion:
                 "Los valores iniciales corresponden a la recomendación automática y se restringen al saldo por devolver detectado."
             )
 
-            for idx, row in enumerate(adjustable_rows.itertuples()):
-                max_return = float(row.saldo_por_devolver)
-                if max_return <= 0:
-                    continue
-                recommended = float(row.retorno_sugerido)
-                default_value = min(recommended, max_return)
-                step = max(max_return / 20.0, 1.0)
-                key_label = re.sub(r"[^0-9a-zA-Z]+", "_", str(row.generica)) or "generica"
-                input_value = st.number_input(
-                    f"{row.generica}",
-                    min_value=0.0,
-                    max_value=max_return,
-                    value=default_value,
-                    step=step,
-                    format="%.2f",
-                    key=f"sim_return_{idx}_{key_label.lower()}",
-                    help=(
-                        "Saldo disponible: S/ {:,.2f}. Devolución sugerida: S/ {:,.2f}".format(
-                            max_return, recommended
-                        )
+            editor_df = adjustable_rows[[
+                "generica",
+                "saldo_por_devolver",
+                "retorno_sugerido",
+            ]].copy()
+            editor_df.rename(
+                columns={
+                    "generica": "Genérica",
+                    "saldo_por_devolver": "Saldo disponible",
+                    "retorno_sugerido": "Devolución sugerida",
+                },
+                inplace=True,
+            )
+            editor_df["Devolución personalizada"] = editor_df.apply(
+                lambda row: min(float(row["Devolución sugerida"]), float(row["Saldo disponible"])),
+                axis=1,
+            )
+
+            edited_returns = st.data_editor(
+                editor_df,
+                hide_index=True,
+                key="sim_custom_returns",
+                column_config={
+                    "Genérica": st.column_config.TextColumn("Genérica", disabled=True),
+                    "Saldo disponible": st.column_config.NumberColumn(
+                        "Saldo disponible",
+                        disabled=True,
+                        format="%0.2f",
                     ),
-                )
-                custom_returns[row.generica] = float(input_value)
+                    "Devolución sugerida": st.column_config.NumberColumn(
+                        "Devolución sugerida",
+                        disabled=True,
+                        format="%0.2f",
+                    ),
+                    "Devolución personalizada": st.column_config.NumberColumn(
+                        "Devolución personalizada",
+                        help="Define cuánto devolverías en esta genérica (se limita al saldo disponible).",
+                        format="%0.2f",
+                        min_value=0.0,
+                    ),
+                },
+            )
+
+            if edited_returns is not None and not edited_returns.empty:
+                for _, row in edited_returns.iterrows():
+                    gen_value = str(row.get("Genérica", "")).strip()
+                    if not gen_value:
+                        continue
+                    max_available = float(row.get("Saldo disponible", 0.0) or 0.0)
+                    desired = float(row.get("Devolución personalizada", 0.0) or 0.0)
+                    custom_returns[gen_value] = float(np.clip(desired, 0.0, max_available))
 
         overview_rows = simulation_overview_df.to_dict("records")
         custom_return_total = float(sum(custom_returns.values())) if custom_returns else 0.0
@@ -2035,7 +2063,7 @@ with tab_simulacion:
 
         for row in simulation_detail_df.itertuples():
             suggested = float(row.retorno_sugerido)
-            manual_return = float(custom_returns.get(row.generica, 0.0))
+            manual_return = float(custom_returns.get(str(row.generica).strip(), 0.0))
             pim_base = float(row.mto_pim)
             pim_final = max(pim_base - manual_return, 0.0)
             projected = min(float(row.proyeccion_total), pim_final)
@@ -2074,48 +2102,80 @@ with tab_simulacion:
         st.subheader("Visualización interactiva de escenarios")
         chart_rows = []
         for record in overview_rows:
-            chart_rows.append(
-                {
-                    "Escenario": record["Escenario"],
-                    "Indicador": "PIM final",
-                    "Monto": float(record.get("PIM final", 0.0)),
-                }
-            )
-            chart_rows.append(
-                {
-                    "Escenario": record["Escenario"],
-                    "Indicador": "Devengado proyectado",
-                    "Monto": float(record.get("Devengado proyectado", 0.0)),
-                }
-            )
-            chart_rows.append(
-                {
-                    "Escenario": record["Escenario"],
-                    "Indicador": "% avance fin de año",
-                    "Monto": float(record.get("% avance fin de año", 0.0)),
-                }
+            chart_rows.extend(
+                [
+                    {
+                        "Escenario": record["Escenario"],
+                        "Indicador": "PIM final",
+                        "Monto": float(record.get("PIM final", 0.0)),
+                        "Tipo": "Monto",
+                    },
+                    {
+                        "Escenario": record["Escenario"],
+                        "Indicador": "Devengado proyectado",
+                        "Monto": float(record.get("Devengado proyectado", 0.0)),
+                        "Tipo": "Monto",
+                    },
+                    {
+                        "Escenario": record["Escenario"],
+                        "Indicador": "% avance fin de año",
+                        "Monto": float(record.get("% avance fin de año", 0.0)),
+                        "Tipo": "Porcentaje",
+                    },
+                ]
             )
         scenarios_chart_df = pd.DataFrame(chart_rows)
         if not scenarios_chart_df.empty:
-            scenario_chart = (
-                alt.Chart(scenarios_chart_df)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Escenario:N", title="Escenario"),
-                    y=alt.Y("Monto:Q", title="Valor", axis=alt.Axis(format=",.2f")),
-                    color=alt.Color("Indicador:N", title="Indicador"),
-                    column=alt.Column("Indicador:N", title=""),
-                    tooltip=[
-                        alt.Tooltip("Escenario:N", title="Escenario"),
-                        alt.Tooltip("Indicador:N", title="Indicador"),
-                        alt.Tooltip("Monto:Q", title="Valor", format=",.2f"),
-                    ],
-                )
-                .resolve_scale(y="independent")
-                .properties(height=280)
-                .interactive()
+            metric_options = (
+                scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Monto", "Indicador"].unique().tolist()
             )
-            st.altair_chart(scenario_chart, use_container_width=True)
+            percent_options = (
+                scenarios_chart_df.loc[scenarios_chart_df["Tipo"] == "Porcentaje", "Indicador"].unique().tolist()
+            )
+
+            if metric_options:
+                metric_binding = alt.binding_select(options=metric_options, name="Indicador")
+                metric_selection = alt.selection_single(
+                    fields=["Indicador"],
+                    bind=metric_binding,
+                    init={"Indicador": metric_options[0]},
+                )
+                metric_chart = (
+                    alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Monto"])
+                    .add_selection(metric_selection)
+                    .transform_filter(metric_selection)
+                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    .encode(
+                        x=alt.X("Escenario:N", title="Escenario"),
+                        y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
+                        color=alt.Color("Escenario:N", title="Escenario", scale=alt.Scale(scheme="tableau20")),
+                        tooltip=[
+                            alt.Tooltip("Escenario:N", title="Escenario"),
+                            alt.Tooltip("Monto:Q", title="Monto (S/)", format=",.2f"),
+                        ],
+                    )
+                    .properties(height=300)
+                    .interactive()
+                )
+                st.altair_chart(metric_chart, use_container_width=True)
+
+            if percent_options:
+                percent_chart = (
+                    alt.Chart(scenarios_chart_df[scenarios_chart_df["Tipo"] == "Porcentaje"])
+                    .mark_line(point=alt.OverlayMarkDef(size=80, filled=True))
+                    .encode(
+                        x=alt.X("Escenario:N", title="Escenario"),
+                        y=alt.Y("Monto:Q", title="% avance fin de año", axis=alt.Axis(format=".2f")),
+                        color=alt.Color("Escenario:N", title="Escenario", scale=alt.Scale(scheme="turbo")),
+                        tooltip=[
+                            alt.Tooltip("Escenario:N", title="Escenario"),
+                            alt.Tooltip("Monto:Q", title="Avance (%)", format=".2f"),
+                        ],
+                    )
+                    .properties(height=260)
+                    .interactive()
+                )
+                st.altair_chart(percent_chart, use_container_width=True)
 
         if custom_returns:
             chart_return_rows = []
@@ -2131,18 +2191,21 @@ with tab_simulacion:
                     {
                         "Genérica": row.generica,
                         "Tipo": "Personalizado",
-                        "Monto": float(custom_returns.get(row.generica, 0.0)),
+                        "Monto": float(custom_returns.get(str(row.generica).strip(), 0.0)),
                     }
                 )
             returns_chart_df = pd.DataFrame(chart_return_rows)
             if not returns_chart_df.empty:
+                hover_selection = alt.selection_single(fields=["Genérica"], nearest=True, on="mouseover")
                 returns_chart = (
                     alt.Chart(returns_chart_df)
-                    .mark_bar()
+                    .add_selection(hover_selection)
+                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
                     .encode(
                         x=alt.X("Genérica:N", sort="-y", title="Genérica"),
                         y=alt.Y("Monto:Q", title="Monto (S/)", axis=alt.Axis(format=",.2f")),
-                        color=alt.Color("Tipo:N", title="Escenario"),
+                        color=alt.Color("Tipo:N", title="Escenario", scale=alt.Scale(scheme="plasma")),
+                        opacity=alt.condition(hover_selection, alt.value(1.0), alt.value(0.6)),
                         tooltip=[
                             alt.Tooltip("Genérica:N", title="Genérica"),
                             alt.Tooltip("Tipo:N", title="Escenario"),
@@ -2261,57 +2324,122 @@ with tab_gestion:
         remaining_months = max(12 - current_month, 1)
         pim_total = df_view["mto_pim"].sum()
         processes = []
-        for col, label in [("mto_certificado", "Certificar"), ("mto_compro_anual", "Comprometer"), ("devengado", "Devengar")]:
+        for col, label in [
+            ("mto_certificado", "Certificar"),
+            ("mto_compro_anual", "Comprometer"),
+            ("devengado", "Devengar"),
+        ]:
             total = df_view.get(col, pd.Series(dtype=float)).sum()
             actual_avg = total / max(current_month, 1)
             needed = max(pim_total - total, 0)
             required_avg = needed / remaining_months
             processes.append({"Proceso": label, "Actual": actual_avg, "Necesario": required_avg})
         ritmo_raw = pd.DataFrame(processes)
-        ritmo_df = round_numeric_for_reporting(ritmo_raw)
-        if ritmo_df.empty:
+        if ritmo_raw.empty:
             st.info("No hay información suficiente para calcular el ritmo requerido.")
         else:
-            vista_ritmo = st.radio(
-                "Selecciona la vista",
-                ("Gráfico", "Tabla"),
-                horizontal=True,
-                key="ritmo_view_mode",
-                help="Elige si deseas comparar el ritmo actual vs. necesario en gráfico o tabla.",
-                label_visibility="collapsed",
+            st.caption(
+                "Ajusta el impulso mensual por proceso para visualizar cómo cambia la brecha entre el ritmo actual y el necesario."
+            )
+            editor_source = ritmo_raw.copy()
+            editor_source["Impulso manual (S/)"] = 0.0
+            edited = st.data_editor(
+                editor_source,
+                hide_index=True,
+                key="ritmo_editor",
+                column_config={
+                    "Proceso": st.column_config.TextColumn("Proceso", disabled=True),
+                    "Actual": st.column_config.NumberColumn(
+                        "Ritmo actual (S/)",
+                        disabled=True,
+                        format="%0.2f",
+                    ),
+                    "Necesario": st.column_config.NumberColumn(
+                        "Ritmo necesario (S/)",
+                        disabled=True,
+                        format="%0.2f",
+                    ),
+                    "Impulso manual (S/)": st.column_config.NumberColumn(
+                        "Impulso manual (S/)",
+                        help="Ingresa cuánto adicional se podría ejecutar mensualmente en cada proceso.",
+                        step=1000.0,
+                        format="%0.2f",
+                    ),
+                },
             )
 
-            if vista_ritmo == "Gráfico":
-                ritmo_melt = ritmo_df.melt("Proceso", var_name="Tipo", value_name="Monto")
-                chart_ritmo = (
-                    alt.Chart(ritmo_melt)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("Proceso:N"),
-                        y=alt.Y("Monto:Q", axis=alt.Axis(format=",.2f")),
-                        color="Tipo:N",
-                        tooltip=["Proceso", "Tipo", alt.Tooltip("Monto", format=",.2f")],
-                    )
-                    .properties(width=600, height=300)
-                )
-                st.altair_chart(chart_ritmo, use_container_width=False)
+            if edited is None or edited.empty:
+                impulso = pd.Series(0.0, index=ritmo_raw.index)
             else:
-                fmt_ritmo = build_style_formatters(ritmo_df)
-                ritmo_style = ritmo_df.style
-                if fmt_ritmo:
-                    ritmo_style = ritmo_style.format(fmt_ritmo)
-                st.dataframe(ritmo_style, use_container_width=True)
-        if not ritmo_raw.empty:
-            gap = (ritmo_raw["Necesario"] - ritmo_raw["Actual"]).clip(lower=0)
-            gap_idx = gap.idxmax()
-            proceso_objetivo = ritmo_raw.loc[gap_idx, "Proceso"]
-            brecha = float(gap.loc[gap_idx])
-            requerido_total = float(ritmo_raw["Necesario"].sum())
-            st.markdown(
-                "**Análisis:** Para completar el PIM se requiere ejecutar en promedio S/ "
-                f"{requerido_total:,.2f} mensuales; el mayor esfuerzo pendiente está en {proceso_objetivo} "
-                f"con una brecha de S/ {brecha:,.2f} frente al ritmo actual."
+                impulso = pd.to_numeric(edited.get("Impulso manual (S/)", 0.0), errors="coerce").fillna(0.0)
+            ritmo_dynamic = ritmo_raw.copy()
+            ritmo_dynamic["Impulso manual (S/)"] = impulso
+            ritmo_dynamic["Ritmo ajustado"] = ritmo_dynamic["Actual"] + ritmo_dynamic["Impulso manual (S/)"]
+            ritmo_dynamic["Brecha restante (S/)"] = (
+                ritmo_dynamic["Necesario"] - ritmo_dynamic["Ritmo ajustado"]
             )
+            ritmo_dynamic["Brecha restante (S/)"] = ritmo_dynamic["Brecha restante (S/)"]
+
+            ritmo_display = round_numeric_for_reporting(
+                ritmo_dynamic.rename(
+                    columns={
+                        "Actual": "Ritmo actual (S/)",
+                        "Necesario": "Ritmo necesario (S/)",
+                    }
+                )
+            )
+            fmt_ritmo = build_style_formatters(ritmo_display)
+            ritmo_style = ritmo_display.style
+            if fmt_ritmo:
+                ritmo_style = ritmo_style.format(fmt_ritmo)
+            st.dataframe(ritmo_style, use_container_width=True)
+
+            ritmo_melt = ritmo_dynamic.melt(
+                "Proceso",
+                value_vars=["Actual", "Necesario", "Ritmo ajustado"],
+                var_name="Escenario",
+                value_name="Monto",
+            )
+            ritmo_chart = (
+                alt.Chart(ritmo_melt)
+                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                .encode(
+                    x=alt.X("Proceso:N", title="Proceso"),
+                    y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format=",.2f")),
+                    color=alt.Color(
+                        "Escenario:N",
+                        title="Escenario",
+                        scale=alt.Scale(scheme="spectral"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Proceso:N", title="Proceso"),
+                        alt.Tooltip("Escenario:N", title="Escenario"),
+                        alt.Tooltip("Monto:Q", title="Monto", format=",.2f"),
+                    ],
+                )
+                .properties(height=320)
+                .interactive()
+            )
+            st.altair_chart(ritmo_chart, use_container_width=True)
+
+            if not ritmo_dynamic.empty:
+                brechas = ritmo_dynamic["Brecha restante (S/)"]
+                brechas_clipped = brechas.clip(lower=0.0)
+                total_brecha = float(brechas_clipped.sum())
+                if total_brecha <= 1e-6:
+                    st.success(
+                        "**Análisis:** Con el impulso definido cada proceso alcanza el ritmo necesario; el programa se mantendría al día con el PIM proyectado."
+                    )
+                else:
+                    peor_idx = brechas_clipped.idxmax()
+                    proceso_objetivo = ritmo_dynamic.loc[peor_idx, "Proceso"]
+                    brecha = float(brechas_clipped.loc[peor_idx])
+                    requerido_total = float(ritmo_dynamic["Necesario"].sum())
+                    st.markdown(
+                        "**Análisis:** Para completar el PIM se requiere ejecutar en promedio S/ "
+                        f"{requerido_total:,.2f} mensuales. Tras el impulso propuesto aún falta potenciar {proceso_objetivo} "
+                        f"en S/ {brecha:,.2f} mensuales."
+                    )
 
     st.header("Top áreas con menor avance")
     if "sec_func" in df_view.columns and "mto_pim" in df_view.columns:
