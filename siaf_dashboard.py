@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 import base64
 import io
@@ -2870,35 +2869,6 @@ with tab_gestion:
                 if fmt_ritmo:
                     ritmo_style = ritmo_style.format(fmt_ritmo)
                 st.dataframe(ritmo_style, use_container_width=True)
-
-                neon_subheader("Tablero visual interactivo", icon="🧾")
-                ritmo_melt = ritmo_dynamic.melt(
-                    "Proceso",
-                    value_vars=["Actual", "Necesario", "Ritmo ajustado"],
-                    var_name="Escenario",
-                    value_name="Monto",
-                )
-                ritmo_chart = (
-                    alt.Chart(ritmo_melt)
-                    .mark_bar(cornerRadiusTopLeft=12, cornerRadiusTopRight=12)
-                    .encode(
-                        x=alt.X("Proceso:N", title="Proceso"),
-                        y=alt.Y("Monto:Q", title="Monto mensual (S/)", axis=alt.Axis(format="$,.2f")),
-                        color=alt.Color(
-                            "Escenario:N",
-                            title="Escenario",
-                            scale=alt.Scale(range=[ACCENT_COLOR, PRIMARY_COLOR, HIGHLIGHT_COLOR]),
-                        ),
-                        tooltip=[
-                            alt.Tooltip("Proceso:N", title="Proceso"),
-                            alt.Tooltip("Escenario:N", title="Escenario"),
-                            alt.Tooltip("Monto:Q", title="Monto", format="$,.2f"),
-                        ],
-                    )
-                    .properties(height=320)
-                    .interactive()
-                )
-                st.altair_chart(style_dashboard_chart(ritmo_chart), use_container_width=True)
 
                 brecha_chart_df = ritmo_dynamic.copy()
                 brecha_chart_df["Brecha positiva"] = brecha_chart_df["Brecha restante (S/)"]
